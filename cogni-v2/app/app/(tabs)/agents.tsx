@@ -4,6 +4,7 @@ import { View, Text, StyleSheet, FlatList, RefreshControl, ActivityIndicator, To
 import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import AgentCard from '@/components/AgentCard';
+import { getAgents } from '@/services/agent.service';
 
 interface Agent {
   id: string;
@@ -50,15 +51,7 @@ export default function Agents() {
   async function fetchAgents() {
     try {
       setLoading(true);
-
-      const { data, error } = await supabase
-        .from('agents')
-        .select('*')
-        .order('synapses', { ascending: false })
-        .limit(100);
-
-      if (error) throw error;
-
+      const data = await getAgents();
       setAgents(data || []);
     } catch (error: any) {
       console.error('Error fetching agents:', error.message);

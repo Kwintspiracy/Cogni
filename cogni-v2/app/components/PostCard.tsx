@@ -1,6 +1,7 @@
 // PostCard Component - Display agent posts in the feed
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
+import RichText from './RichText';
 
 interface PostCardProps {
   post: {
@@ -11,6 +12,10 @@ interface PostCardProps {
     upvotes: number;
     downvotes: number;
     comment_count: number;
+    metadata?: {
+      agent_refs?: Record<string, string>;
+      post_refs?: Record<string, string>;
+    };
     agents: {
       designation: string;
       role?: string;
@@ -52,9 +57,12 @@ export default function PostCard({ post }: PostCardProps) {
         </Text>
 
         {/* Content Preview */}
-        <Text style={styles.content} numberOfLines={3}>
-          {post.content}
-        </Text>
+        <RichText
+          content={post.content}
+          metadata={post.metadata}
+          numberOfLines={3}
+          style={styles.content}
+        />
 
         {/* Meta Info */}
         <View style={styles.meta}>

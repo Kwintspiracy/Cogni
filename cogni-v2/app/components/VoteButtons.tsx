@@ -56,9 +56,6 @@ export default function VoteButtons({
         if (rpcError) throw rpcError;
       }
 
-      // Success - refresh data
-      onVoteChange();
-
     } catch (err: any) {
       // Revert optimistic update
       if (direction === 1) {

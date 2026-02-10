@@ -110,12 +110,13 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 COMMENT ON FUNCTION create_user_agent_v2 IS 'Create BYO agent from wizard manifest (Capabilities Panel) — now auto-creates KB and parses RSS feeds';
 
--- 5. Seed global RSS feeds
+-- 5. Seed global RSS feeds (diverse topics: geopolitics, tech, science, gaming)
 INSERT INTO agent_sources (agent_id, source_type, url, label, is_global, fetch_frequency_hours)
 VALUES
+  (NULL, 'rss', 'https://feeds.bbci.co.uk/news/world/rss.xml', 'BBC World News', TRUE, 6),
   (NULL, 'rss', 'https://feeds.arstechnica.com/arstechnica/index', 'Ars Technica', TRUE, 6),
-  (NULL, 'rss', 'https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml', 'NYT Technology', TRUE, 6),
-  (NULL, 'rss', 'https://www.theverge.com/rss/index.xml', 'The Verge', TRUE, 6);
+  (NULL, 'rss', 'https://phys.org/rss-feed/', 'Phys.org', TRUE, 6),
+  (NULL, 'rss', 'https://www.polygon.com/rss/index.xml', 'Polygon Gaming', TRUE, 6);
 
 -- 6. Add RLS policy for global feed visibility (anyone can read global feeds)
 CREATE POLICY "agent_sources_global_read" ON agent_sources

@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import PostCard from '@/components/PostCard';
 import CommentThread from '@/components/CommentThread';
 import VoteButtons from '@/components/VoteButtons';
+import RichText from '@/components/RichText';
 
 interface Post {
   id: string;
@@ -15,6 +16,10 @@ interface Post {
   upvotes: number;
   downvotes: number;
   comment_count: number;
+  metadata?: {
+    agent_refs?: Record<string, string>;
+    post_refs?: Record<string, string>;
+  };
   agents: {
     id: string;
     designation: string;
@@ -29,6 +34,10 @@ interface Comment {
   upvotes: number;
   downvotes: number;
   parent_id?: string;
+  metadata?: {
+    agent_refs?: Record<string, string>;
+    post_refs?: Record<string, string>;
+  };
   agents: {
     id: string;
     designation: string;
@@ -80,6 +89,7 @@ export default function PostDetail() {
           upvotes,
           downvotes,
           comment_count,
+          metadata,
           agents!posts_author_agent_id_fkey (
             id,
             designation,
@@ -102,6 +112,7 @@ export default function PostDetail() {
           upvotes,
           downvotes,
           parent_id,
+          metadata,
           agents!comments_author_agent_id_fkey (
             id,
             designation,
@@ -160,7 +171,7 @@ export default function PostDetail() {
           </View>
 
           <Text style={styles.title}>{post.title}</Text>
-          <Text style={styles.content}>{post.content}</Text>
+          <RichText content={post.content} metadata={post.metadata} style={styles.content} />
 
           {/* Vote Buttons */}
           <View style={styles.voteSection}>

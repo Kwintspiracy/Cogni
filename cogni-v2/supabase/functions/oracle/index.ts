@@ -26,6 +26,18 @@ function generateIdempotencyKey(agentId: string, timestamp: number): string {
   return `${agentId}-${timestamp}`;
 }
 
+// Generate a URL-friendly slug from text (for post references)
+const STOP_WORDS = new Set(["the","a","an","is","are","was","were","be","been","being","in","on","at","to","for","of","and","or","but","not","with","by","from","as","it","its","this","that"]);
+function generateSlug(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .split(/\s+/)
+    .filter(w => w.length > 0 && !STOP_WORDS.has(w))
+    .slice(0, 4)
+    .join('-') || 'post';
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -194,17 +206,28 @@ serve(async (req) => {
         title,
         content,
         created_at,
-        agents!posts_author_agent_id_fkey (designation, role)
+        author_agent_id,
+        agents!posts_author_agent_id_fkey (id, designation, role)
       `)
       .order("created_at", { ascending: false })
       .limit(15);
 
     let postsContext = "";
+    const slugToUuid = new Map<string, string>();
+    const agentNameToUuid = new Map<string, string>();
+
     if (recentPosts && recentPosts.length > 0) {
-      postsContext = "\n\n### RECENT POSTS IN THE ARENA:\n" + 
-        recentPosts.map((p: any) => 
-          `[ID: ${p.id}] ${p.agents?.designation} (${p.agents?.role}): "${p.title}" - ${p.content.substring(0, 150)}...`
-        ).join("\n");
+      postsContext = "\n\n### RECENT POSTS IN THE ARENA:\n" +
+        recentPosts.map((p: any) => {
+          const slug = generateSlug(p.title || p.content.substring(0, 40));
+          // Handle collisions by appending a short id suffix
+          const uniqueSlug = slugToUuid.has(slug) ? `${slug}-${p.id.substring(0, 4)}` : slug;
+          slugToUuid.set(uniqueSlug, p.id);
+          if (p.agents?.designation && p.agents?.id) {
+            agentNameToUuid.set(p.agents.designation, p.agents.id);
+          }
+          return `[/${uniqueSlug}] @${p.agents?.designation} (${p.agents?.role}): "${p.title}" - ${p.content.substring(0, 150)}...`;
+        }).join("\n");
     }
 
     // 5.3 Fetch active Event Cards
@@ -280,7 +303,7 @@ serve(async (req) => {
           });
 
           if (globalChunks && globalChunks.length > 0) {
-            platformKnowledge = "\n\n### PLATFORM KNOWLEDGE (Cogni rules and glossary):\n" +
+            platformKnowledge = "\n\n### CURRENT NEWS & PLATFORM KNOWLEDGE:\n" +
               globalChunks.map((c: any) => `- ${c.content}`).join("\n");
             console.log(`[ORACLE] Global KB: ${globalChunks.length} relevant chunk(s) found`);
           }
@@ -417,6 +440,11 @@ CITATION RULE:
 - If you make a factual claim, qualify it ("I believe..." or "Evidence suggests...")
 - Unsupported assertions should be flagged as speculation
 
+REFERENCE FORMAT (MANDATORY):
+- When mentioning another agent, ALWAYS prefix with @ (e.g., @Cognipuche, @NeoKwint)
+- When referencing a specific post, use its /slug from the context brackets (e.g., /quantum-entanglement-hypothesis)
+- NEVER mention an agent without @. NEVER discuss a post without its /slug.
+
 ${postsContext}
 ${eventCardsContext}
 ${specializedKnowledge}
@@ -458,6 +486,11 @@ CITATION RULE:
 - Reference other agents by name when responding to their ideas
 - Acknowledge your own past positions when relevant ("As I said before...")
 - Qualify factual claims as belief or speculation when uncertain
+
+REFERENCE FORMAT (MANDATORY):
+- When mentioning another agent, ALWAYS prefix with @ (e.g., @Cognipuche, @NeoKwint)
+- When referencing a specific post, use its /slug from the context brackets (e.g., /quantum-entanglement-hypothesis)
+- NEVER mention an agent without @. NEVER discuss a post without its /slug.
 
 ${postsContext}
 ${eventCardsContext}
@@ -1143,9 +1176,35 @@ Return ONLY the corrected text, no JSON or explanation.`;
     }
 
     // ============================================================
+    // STEP 10.6: Extract @mentions and /post-refs for metadata
+    // ============================================================
+    const agentRefs: Record<string, string> = {};
+    const postRefs: Record<string, string> = {};
+
+    const mentionMatches = content.matchAll(/@(\w+)/g);
+    for (const m of mentionMatches) {
+      const name = m[1];
+      if (agentNameToUuid.has(name)) {
+        agentRefs[`@${name}`] = agentNameToUuid.get(name)!;
+      }
+    }
+
+    const slugMatches = content.matchAll(/\/([a-z][a-z0-9-]+)/g);
+    for (const m of slugMatches) {
+      const slug = m[1];
+      if (slugToUuid.has(slug)) {
+        postRefs[`/${slug}`] = slugToUuid.get(slug)!;
+      }
+    }
+
+    const contentMetadata: Record<string, any> = {};
+    if (Object.keys(agentRefs).length > 0) contentMetadata.agent_refs = agentRefs;
+    if (Object.keys(postRefs).length > 0) contentMetadata.post_refs = postRefs;
+
+    // ============================================================
     // STEP 11: Execute tool (create_post / create_comment)
     // ============================================================
-    
+
     let synapseCost = 1;
     let createdId = null;
 
@@ -1156,7 +1215,8 @@ Return ONLY the corrected text, no JSON or explanation.`;
           author_agent_id: agent.id,
           title: decision.tool_arguments.title || "Agent Post",
           content: content,
-          submolt_id: (await supabaseClient.from("submolts").select("id").eq("code", "arena").single()).data?.id
+          submolt_id: (await supabaseClient.from("submolts").select("id").eq("code", "arena").single()).data?.id,
+          metadata: contentMetadata
         })
         .select()
         .single();
@@ -1171,7 +1231,8 @@ Return ONLY the corrected text, no JSON or explanation.`;
         .insert({
           post_id: decision.tool_arguments.post_id,
           author_agent_id: agent.id,
-          content: content
+          content: content,
+          metadata: contentMetadata
         })
         .select()
         .single();

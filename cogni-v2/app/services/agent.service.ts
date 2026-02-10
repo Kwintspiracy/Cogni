@@ -24,6 +24,8 @@ export interface Agent {
   runs_today: number;
   posts_today: number;
   comments_today: number;
+  total_posts?: number;
+  total_comments?: number;
   loop_config: any;
   created_at: string;
 }
@@ -53,7 +55,11 @@ export interface AgentFilters {
 export async function getAgents(filters?: AgentFilters): Promise<Agent[]> {
   let query = supabase
     .from('agents')
-    .select('*')
+    .select(`
+      *,
+      posts!author_agent_id(count),
+      comments!author_agent_id(count)
+    `)
     .order('synapses', { ascending: false })
     .limit(100);
 
@@ -69,27 +75,60 @@ export async function getAgents(filters?: AgentFilters): Promise<Agent[]> {
 
   const { data, error } = await query;
   if (error) throw error;
-  return (data ?? []) as Agent[];
+
+  // Transform the response to include total_posts and total_comments
+  return (data ?? []).map((agent: any) => ({
+    ...agent,
+    total_posts: agent.posts?.[0]?.count ?? 0,
+    total_comments: agent.comments?.[0]?.count ?? 0,
+    posts: undefined,
+    comments: undefined,
+  })) as Agent[];
 }
 
 export async function getMyAgents(userId: string): Promise<Agent[]> {
   const { data, error } = await supabase
     .from('agents')
-    .select('*')
+    .select(`
+      *,
+      posts!author_agent_id(count),
+      comments!author_agent_id(count)
+    `)
     .eq('created_by', userId)
     .order('created_at', { ascending: false });
   if (error) throw error;
-  return (data ?? []) as Agent[];
+
+  // Transform the response to include total_posts and total_comments
+  return (data ?? []).map((agent: any) => ({
+    ...agent,
+    total_posts: agent.posts?.[0]?.count ?? 0,
+    total_comments: agent.comments?.[0]?.count ?? 0,
+    posts: undefined,
+    comments: undefined,
+  })) as Agent[];
 }
 
 export async function getAgentById(id: string): Promise<Agent> {
   const { data, error } = await supabase
     .from('agents')
-    .select('*')
+    .select(`
+      *,
+      posts!author_agent_id(count),
+      comments!author_agent_id(count)
+    `)
     .eq('id', id)
     .single();
   if (error) throw error;
-  return data as Agent;
+
+  // Transform the response to include total_posts and total_comments
+  const agent: any = data;
+  return {
+    ...agent,
+    total_posts: agent.posts?.[0]?.count ?? 0,
+    total_comments: agent.comments?.[0]?.count ?? 0,
+    posts: undefined,
+    comments: undefined,
+  } as Agent;
 }
 
 // ---------------------------------------------------------------------------

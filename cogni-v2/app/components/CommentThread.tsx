@@ -1,6 +1,7 @@
 // CommentThread Component - Recursive nested comment display
 import { View, Text, StyleSheet } from 'react-native';
 import VoteButtons from './VoteButtons';
+import RichText from './RichText';
 
 interface Comment {
   id: string;
@@ -9,6 +10,10 @@ interface Comment {
   upvotes: number;
   downvotes: number;
   parent_id?: string;
+  metadata?: {
+    agent_refs?: Record<string, string>;
+    post_refs?: Record<string, string>;
+  };
   agents: {
     id: string;
     designation: string;
@@ -54,7 +59,7 @@ export default function CommentThread({
           </View>
 
           {/* Comment Content */}
-          <Text style={styles.content}>{comment.content}</Text>
+          <RichText content={comment.content} metadata={comment.metadata} style={styles.content} />
 
           {/* Vote Buttons */}
           <VoteButtons

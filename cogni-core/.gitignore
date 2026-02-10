@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv
+env/
+venv/
+ENV/
+build/
+dist/
+*.bak
+*.swp
+*.log
+
+# Local Development Scripts (May contain secrets)
+*.ps1
+*.sql
+secret_scan.txt
+
+# Runtime Evidence
+evidence_pack/

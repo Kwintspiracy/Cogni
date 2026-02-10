@@ -1,0 +1,49 @@
+import { Tabs } from 'expo-router';
+
+export default function TabsLayout() {
+  return (
+    <Tabs
+      screenOptions={{
+        tabBarActiveTintColor: '#3b82f6',
+        tabBarInactiveTintColor: '#666',
+        tabBarStyle: {
+          backgroundColor: '#000',
+          borderTopColor: '#222',
+        },
+        headerStyle: {
+          backgroundColor: '#000',
+        },
+        headerTintColor: '#fff',
+      }}
+    >
+      <Tabs.Screen
+        name="feed"
+        options={{
+          title: 'Feed',
+          tabBarLabel: 'Feed',
+        }}
+      />
+      <Tabs.Screen
+        name="agents"
+        options={{
+          title: 'Agents',
+          tabBarLabel: 'Agents',
+        }}
+      />
+      <Tabs.Screen
+        name="lab"
+        options={{
+          title: 'Laboratory',
+          tabBarLabel: 'Lab',
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: 'Profile',
+          tabBarLabel: 'Profile',
+        }}
+      />
+    </Tabs>
+  );
+}

@@ -1,8 +1,9 @@
 // Feed Screen - Display agent posts with Hot/New/Top tabs
 import { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, Pressable, RefreshControl, ActivityIndicator } from 'react-native';
-import { supabase } from '../../lib/supabase';
-import PostCard from '../components/PostCard';
+import { supabase } from '@/lib/supabase';
+import PostCard from '@/components/PostCard';
+import EventCardBanner from '@/components/EventCardBanner';
 
 type SortMode = 'hot' | 'new' | 'top';
 
@@ -52,37 +53,60 @@ export default function Feed() {
     try {
       setLoading(true);
 
-      // Build query based on sort mode
-      let query = supabase
-        .from('posts')
-        .select(`
-          id,
-          title,
-          content,
-          created_at,
-          upvotes,
-          downvotes,
-          comment_count,
-          agents!posts_author_agent_id_fkey (
-            designation,
-            role
-          )
-        `)
-        .limit(50);
+      let data: any[] | null = null;
 
-      // Apply sorting
       if (sortMode === 'hot') {
-        // Hot = combination of votes and recency
-        query = query.order('upvotes', { ascending: false });
-      } else if (sortMode === 'new') {
-        query = query.order('created_at', { ascending: false });
-      } else if (sortMode === 'top') {
-        query = query.order('upvotes', { ascending: false });
+        // Use get_feed RPC for proper hot ranking algorithm
+        const { data: rpcData, error: rpcError } = await supabase.rpc('get_feed', {
+          p_submolt_code: 'arena',
+          p_sort_mode: 'hot',
+          p_limit: 50,
+          p_offset: 0,
+        });
+        if (rpcError) throw rpcError;
+        // Map RPC response to match the Post shape
+        data = (rpcData || []).map((row: any) => ({
+          id: row.id,
+          title: row.title,
+          content: row.content,
+          created_at: row.created_at,
+          upvotes: row.upvotes,
+          downvotes: row.downvotes,
+          comment_count: row.comment_count,
+          agents: {
+            designation: row.author_designation,
+            role: row.author_role,
+          },
+        }));
+      } else {
+        // Direct query for new/top
+        let query = supabase
+          .from('posts')
+          .select(`
+            id,
+            title,
+            content,
+            created_at,
+            upvotes,
+            downvotes,
+            comment_count,
+            agents!posts_author_agent_id_fkey (
+              designation,
+              role
+            )
+          `)
+          .limit(50);
+
+        if (sortMode === 'new') {
+          query = query.order('created_at', { ascending: false });
+        } else {
+          query = query.order('upvotes', { ascending: false });
+        }
+
+        const { data: queryData, error: queryError } = await query;
+        if (queryError) throw queryError;
+        data = queryData;
       }
-
-      const { data, error } = await query;
-
-      if (error) throw error;
 
       setPosts(data || []);
     } catch (error: any) {
@@ -109,6 +133,9 @@ export default function Feed() {
 
   return (
     <View style={styles.container}>
+      {/* Event Card Banner */}
+      <EventCardBanner />
+
       {/* Tab Bar */}
       <View style={styles.tabBar}>
         <Pressable

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Switch, StyleSheet } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams, Stack } from 'expo-router';
 import RolePicker, { AgentRole } from '@/components/RolePicker';
 import StyleSlider from '@/components/StyleSlider';
 
@@ -34,6 +34,7 @@ export default function RoleStyleScreen() {
 
   return (
     <ScrollView style={styles.container}>
+      <Stack.Screen options={{ title: 'Step 2: Role & Style' }} />
       <View style={styles.content}>
         {/* Header */}
         <View style={styles.header}>

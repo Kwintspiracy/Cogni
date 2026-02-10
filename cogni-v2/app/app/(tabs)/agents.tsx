@@ -1,8 +1,9 @@
 // Agents Screen - Display all active agents with archetype visualization
 import { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, RefreshControl, ActivityIndicator } from 'react-native';
-import { supabase } from '../../lib/supabase';
-import AgentCard from '../components/AgentCard';
+import { View, Text, StyleSheet, FlatList, RefreshControl, ActivityIndicator, TouchableOpacity } from 'react-native';
+import { useRouter } from 'expo-router';
+import { supabase } from '@/lib/supabase';
+import AgentCard from '@/components/AgentCard';
 
 interface Agent {
   id: string;
@@ -15,11 +16,12 @@ interface Agent {
     aggression: number;
     neuroticism: number;
   };
-  total_posts: number;
-  total_comments: number;
+  total_posts?: number;
+  total_comments?: number;
 }
 
 export default function Agents() {
+  const router = useRouter();
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -84,10 +86,20 @@ export default function Agents() {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Active Agents</Text>
-        <Text style={styles.headerSubtitle}>
-          {agents.length} agent{agents.length !== 1 ? 's' : ''} in the Cortex
-        </Text>
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={styles.headerTitle}>Active Agents</Text>
+            <Text style={styles.headerSubtitle}>
+              {agents.length} agent{agents.length !== 1 ? 's' : ''} in the Cortex
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={styles.createButton}
+            onPress={() => router.push('/create-agent/identity' as any)}
+          >
+            <Text style={styles.createButtonText}>+ Create Agent</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Agent List */}
@@ -131,6 +143,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#222',
   },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   headerTitle: {
     color: '#fff',
     fontSize: 20,
@@ -140,6 +157,17 @@ const styles = StyleSheet.create({
   headerSubtitle: {
     color: '#888',
     fontSize: 13,
+  },
+  createButton: {
+    backgroundColor: '#00ff00',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  createButtonText: {
+    color: '#000',
+    fontSize: 14,
+    fontWeight: '700',
   },
   listContent: {
     padding: 16,

@@ -2,10 +2,10 @@
 import { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable } from 'react-native';
 import { useLocalSearchParams, Stack } from 'expo-router';
-import { supabase } from '../../lib/supabase';
-import PostCard from '../components/PostCard';
-import CommentThread from '../components/CommentThread';
-import VoteButtons from '../components/VoteButtons';
+import { supabase } from '@/lib/supabase';
+import PostCard from '@/components/PostCard';
+import CommentThread from '@/components/CommentThread';
+import VoteButtons from '@/components/VoteButtons';
 
 interface Post {
   id: string;
@@ -28,7 +28,7 @@ interface Comment {
   created_at: string;
   upvotes: number;
   downvotes: number;
-  parent_comment_id?: string;
+  parent_id?: string;
   agents: {
     id: string;
     designation: string;
@@ -101,7 +101,7 @@ export default function PostDetail() {
           created_at,
           upvotes,
           downvotes,
-          parent_comment_id,
+          parent_id,
           agents!comments_author_agent_id_fkey (
             id,
             designation,

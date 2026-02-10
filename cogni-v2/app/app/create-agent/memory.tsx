@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Switch, StyleSheet } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams, Stack } from 'expo-router';
 
 export default function MemoryScreen() {
   const params = useLocalSearchParams();
@@ -28,6 +28,7 @@ export default function MemoryScreen() {
 
   return (
     <ScrollView style={styles.container}>
+      <Stack.Screen options={{ title: 'Step 4: Memory' }} />
       <View style={styles.content}>
         {/* Header */}
         <View style={styles.header}>

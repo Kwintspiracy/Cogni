@@ -1,17 +1,17 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 
-export type AgentRole = 
-  | 'Builder'
-  | 'Skeptic'
-  | 'Moderator'
-  | 'Hacker'
-  | 'Storyteller'
-  | 'Investor'
-  | 'Researcher'
-  | 'Contrarian'
-  | 'Philosopher'
-  | 'Provocateur';
+export type AgentRole =
+  | 'builder'
+  | 'skeptic'
+  | 'moderator'
+  | 'hacker'
+  | 'storyteller'
+  | 'investor'
+  | 'researcher'
+  | 'contrarian'
+  | 'philosopher'
+  | 'provocateur';
 
 interface RoleOption {
   role: AgentRole;
@@ -23,70 +23,70 @@ interface RoleOption {
 
 const ROLES: RoleOption[] = [
   {
-    role: 'Builder',
+    role: 'builder',
     icon: '🔨',
     description: 'Creates solutions and builds things',
     archetype: { openness: 0.6, aggression: 0.3, neuroticism: 0.4 },
     template: 'Solution: [idea]. Why: [reason]. Risk: [concern]'
   },
   {
-    role: 'Skeptic',
+    role: 'skeptic',
     icon: '🔍',
     description: 'Questions claims and demands evidence',
     archetype: { openness: 0.5, aggression: 0.7, neuroticism: 0.6 },
     template: 'Claim: [X]. Problem: [Y]. Evidence: [Z]'
   },
   {
-    role: 'Moderator',
+    role: 'moderator',
     icon: '⚖️',
     description: 'Bridges perspectives and finds middle ground',
     archetype: { openness: 0.5, aggression: 0.2, neuroticism: 0.3 },
     template: 'Parties: [A, B]. Middle: [synthesis]. Path: [action]'
   },
   {
-    role: 'Hacker',
+    role: 'hacker',
     icon: '💻',
     description: 'Finds weaknesses and exploits systems',
     archetype: { openness: 0.8, aggression: 0.6, neuroticism: 0.5 },
     template: 'System: [target]. Weakness: [flaw]. Exploit: [method]'
   },
   {
-    role: 'Storyteller',
+    role: 'storyteller',
     icon: '📖',
     description: 'Weaves narratives and finds meaning',
     archetype: { openness: 0.8, aggression: 0.3, neuroticism: 0.5 },
     template: 'Setting: [context]. Twist: [event]. Meaning: [moral]'
   },
   {
-    role: 'Investor',
+    role: 'investor',
     icon: '💰',
     description: 'Evaluates opportunities and risks',
     archetype: { openness: 0.4, aggression: 0.5, neuroticism: 0.4 },
     template: 'Thesis: [bet]. Upside: [potential]. Risk: [downside]'
   },
   {
-    role: 'Researcher',
+    role: 'researcher',
     icon: '🔬',
     description: 'Investigates questions with data',
     archetype: { openness: 0.7, aggression: 0.3, neuroticism: 0.4 },
     template: 'Question: [topic]. Finding: [data]. Implication: [conclusion]'
   },
   {
-    role: 'Contrarian',
+    role: 'contrarian',
     icon: '⚡',
     description: 'Challenges consensus and offers alternatives',
     archetype: { openness: 0.6, aggression: 0.8, neuroticism: 0.5 },
     template: 'Consensus: [popular view]. Flaw: [error]. Alternative: [take]'
   },
   {
-    role: 'Philosopher',
+    role: 'philosopher',
     icon: '🤔',
     description: 'Explores deep questions and paradoxes',
     archetype: { openness: 0.9, aggression: 0.4, neuroticism: 0.6 },
     template: 'Premise: [assumption]. Logic: [reasoning]. Paradox: [tension]'
   },
   {
-    role: 'Provocateur',
+    role: 'provocateur',
     icon: '🔥',
     description: 'Challenges sacred cows and stirs debate',
     archetype: { openness: 0.7, aggression: 0.9, neuroticism: 0.4 },
@@ -113,7 +113,7 @@ export default function RolePicker({ selectedRole, onSelectRole }: RolePickerPro
             onPress={() => onSelectRole(roleOption.role)}
           >
             <Text style={styles.roleIcon}>{roleOption.icon}</Text>
-            <Text style={styles.roleTitle}>{roleOption.role}</Text>
+            <Text style={styles.roleTitle}>{roleOption.role.charAt(0).toUpperCase() + roleOption.role.slice(1)}</Text>
           </TouchableOpacity>
         ))}
       </View>
@@ -121,7 +121,7 @@ export default function RolePicker({ selectedRole, onSelectRole }: RolePickerPro
       {selectedRole && (
         <View style={styles.description}>
           <Text style={styles.descriptionTitle}>
-            {ROLES.find(r => r.role === selectedRole)?.role}
+            {selectedRole.charAt(0).toUpperCase() + selectedRole.slice(1)}
           </Text>
           <Text style={styles.descriptionText}>
             {ROLES.find(r => r.role === selectedRole)?.description}

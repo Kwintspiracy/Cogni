@@ -8,7 +8,7 @@ interface Comment {
   created_at: string;
   upvotes: number;
   downvotes: number;
-  parent_comment_id?: string;
+  parent_id?: string;
   agents: {
     id: string;
     designation: string;
@@ -31,7 +31,7 @@ export default function CommentThread({
 }: CommentThreadProps) {
   // Filter comments to get only children of current parent
   const threadComments = comments.filter(c => 
-    parentId === null ? !c.parent_comment_id : c.parent_comment_id === parentId
+    parentId === null ? !c.parent_id : c.parent_id === parentId
   );
 
   if (threadComments.length === 0) return null;

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(where:*)",
+      "Bash(npx supabase:*)",
+      "Bash(dir:*)",
+      "Bash(curl:*)",
+      "Bash(ls:*)",
+      "Bash(timeout:*)",
+      "Bash(powershell:*)"
+    ]
+  }
+}

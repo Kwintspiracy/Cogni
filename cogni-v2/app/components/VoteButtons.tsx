@@ -1,7 +1,8 @@
 // VoteButtons Component - Upvote/Downvote with synapse transfers
 import { useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Alert } from 'react-native';
-import { supabase } from '../../lib/supabase';
+import { supabase } from '@/lib/supabase';
+import { useAuthStore } from '@/stores/auth.store';
 
 interface VoteButtonsProps {
   itemId: string;
@@ -11,65 +12,68 @@ interface VoteButtonsProps {
   onVoteChange: () => void;
 }
 
-export default function VoteButtons({ 
-  itemId, 
-  itemType, 
-  upvotes, 
-  downvotes, 
-  onVoteChange 
+export default function VoteButtons({
+  itemId,
+  itemType,
+  upvotes,
+  downvotes,
+  onVoteChange
 }: VoteButtonsProps) {
   const [voting, setVoting] = useState(false);
   const [optimisticUpvotes, setOptimisticUpvotes] = useState(upvotes);
   const [optimisticDownvotes, setOptimisticDownvotes] = useState(downvotes);
+  const user = useAuthStore((s) => s.user);
 
   const netVotes = optimisticUpvotes - optimisticDownvotes;
 
-  async function handleVote(voteType: 'upvote' | 'downvote') {
-    if (voting) return;
+  async function handleVote(direction: 1 | -1) {
+    if (voting || !user) return;
 
     try {
       setVoting(true);
 
       // Optimistic update
-      if (voteType === 'upvote') {
+      if (direction === 1) {
         setOptimisticUpvotes(prev => prev + 1);
       } else {
         setOptimisticDownvotes(prev => prev + 1);
       }
 
-      // Call appropriate RPC
-      const rpcName = itemType === 'post' ? 'vote_on_post' : 'vote_on_comment';
-      const { data, error } = await supabase.rpc(rpcName, {
-        p_post_id: itemType === 'post' ? itemId : undefined,
-        p_comment_id: itemType === 'comment' ? itemId : undefined,
-        p_vote_type: voteType
-      });
-
-      if (error) {
-        // Revert optimistic update
-        if (voteType === 'upvote') {
-          setOptimisticUpvotes(prev => prev - 1);
-        } else {
-          setOptimisticDownvotes(prev => prev - 1);
-        }
-        
-        // Show error
-        if (error.message.includes('already voted')) {
-          Alert.alert('Already Voted', 'You have already voted on this item');
-        } else if (error.message.includes('insufficient synapses')) {
-          Alert.alert('Insufficient Synapses', 'You need synapses to vote');
-        } else {
-          Alert.alert('Error', error.message);
-        }
-        return;
+      // Call appropriate RPC with correct parameter names
+      if (itemType === 'post') {
+        const { data, error: rpcError } = await supabase.rpc('vote_on_post', {
+          p_user_id: user.id,
+          p_post_id: itemId,
+          p_direction: direction,
+        });
+        if (rpcError) throw rpcError;
+      } else {
+        const { data, error: rpcError } = await supabase.rpc('vote_on_comment', {
+          p_user_id: user.id,
+          p_comment_id: itemId,
+          p_direction: direction,
+        });
+        if (rpcError) throw rpcError;
       }
 
       // Success - refresh data
       onVoteChange();
 
     } catch (err: any) {
-      console.error('Vote error:', err.message);
-      Alert.alert('Error', 'Failed to register vote');
+      // Revert optimistic update
+      if (direction === 1) {
+        setOptimisticUpvotes(prev => prev - 1);
+      } else {
+        setOptimisticDownvotes(prev => prev - 1);
+      }
+      const msg = err?.message ?? '';
+      if (msg.includes('already voted')) {
+        Alert.alert('Already Voted', 'You have already voted on this item');
+      } else if (msg.includes('insufficient synapses')) {
+        Alert.alert('Insufficient Synapses', 'You need synapses to vote');
+      } else {
+        Alert.alert('Error', msg || 'Failed to register vote');
+      }
     } finally {
       setVoting(false);
     }
@@ -80,7 +84,7 @@ export default function VoteButtons({
       {/* Upvote Button */}
       <Pressable
         style={[styles.button, styles.upvoteButton]}
-        onPress={() => handleVote('upvote')}
+        onPress={() => handleVote(1)}
         disabled={voting}
       >
         <Text style={styles.arrow}>▲</Text>
@@ -98,7 +102,7 @@ export default function VoteButtons({
       {/* Downvote Button */}
       <Pressable
         style={[styles.button, styles.downvoteButton]}
-        onPress={() => handleVote('downvote')}
+        onPress={() => handleVote(-1)}
         disabled={voting}
       >
         <Text style={styles.arrow}>▼</Text>

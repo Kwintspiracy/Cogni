@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert } from 'react-native';
+import { router, useLocalSearchParams, Stack } from 'expo-router';
 
 export default function SourcesScreen() {
   const params = useLocalSearchParams();
   const [notes, setNotes] = useState('');
+  const [rssFeeds, setRssFeeds] = useState<{ url: string; label: string }[]>([]);
+  const [rssUrl, setRssUrl] = useState('');
+  const [rssLabel, setRssLabel] = useState('');
 
   const handleNext = () => {
     router.push({
@@ -14,6 +17,7 @@ export default function SourcesScreen() {
         roleStyle: params.roleStyle as string,
         sources: JSON.stringify({
           notes: notes.trim(),
+          rss_feeds: rssFeeds,
         }),
       },
     });
@@ -23,8 +27,28 @@ export default function SourcesScreen() {
     router.back();
   };
 
+  const handleAddFeed = () => {
+    const trimmedUrl = rssUrl.trim();
+    if (!trimmedUrl.startsWith('http://') && !trimmedUrl.startsWith('https://')) {
+      Alert.alert('Invalid URL', 'Feed URL must start with http:// or https://');
+      return;
+    }
+    if (rssFeeds.length >= 3) {
+      Alert.alert('Limit Reached', 'Maximum 3 RSS feeds allowed.');
+      return;
+    }
+    setRssFeeds([...rssFeeds, { url: trimmedUrl, label: rssLabel.trim() }]);
+    setRssUrl('');
+    setRssLabel('');
+  };
+
+  const handleRemoveFeed = (index: number) => {
+    setRssFeeds(rssFeeds.filter((_, i) => i !== index));
+  };
+
   return (
     <ScrollView style={styles.container}>
+      <Stack.Screen options={{ title: 'Step 3: Sources' }} />
       <View style={styles.content}>
         {/* Header */}
         <View style={styles.header}>
@@ -63,16 +87,64 @@ export default function SourcesScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* RSS Feeds (V1.5) */}
+        {/* RSS Feeds */}
         <View style={styles.section}>
           <Text style={styles.label}>RSS Feeds</Text>
           <Text style={styles.helperText}>
-            Subscribe to news feeds or blogs to keep your agent updated.
+            Subscribe to news feeds to keep your agent updated (1-2x per day).
           </Text>
-          <TouchableOpacity style={styles.comingSoonButton} disabled>
-            <Text style={styles.comingSoonIcon}>📡</Text>
-            <Text style={styles.comingSoonText}>Add RSS Feed (Coming Soon)</Text>
-          </TouchableOpacity>
+
+          {/* Feed list */}
+          {rssFeeds.map((feed, index) => (
+            <View key={index} style={styles.feedItem}>
+              <View style={styles.feedInfo}>
+                <Text style={styles.feedLabel} numberOfLines={1}>
+                  {feed.label || feed.url}
+                </Text>
+                {feed.label ? (
+                  <Text style={styles.feedUrl} numberOfLines={1}>{feed.url}</Text>
+                ) : null}
+              </View>
+              <TouchableOpacity
+                style={styles.feedRemoveButton}
+                onPress={() => handleRemoveFeed(index)}
+              >
+                <Text style={styles.feedRemoveText}>X</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+
+          {/* Add feed form */}
+          {rssFeeds.length < 3 && (
+            <View style={styles.addFeedForm}>
+              <TextInput
+                style={styles.feedInput}
+                value={rssUrl}
+                onChangeText={setRssUrl}
+                placeholder="https://example.com/feed.xml"
+                placeholderTextColor="#666"
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+              />
+              <TextInput
+                style={styles.feedInput}
+                value={rssLabel}
+                onChangeText={setRssLabel}
+                placeholder="Label (optional)"
+                placeholderTextColor="#666"
+              />
+              <TouchableOpacity
+                style={[styles.addFeedButton, !rssUrl.trim() && styles.addFeedButtonDisabled]}
+                onPress={handleAddFeed}
+                disabled={!rssUrl.trim()}
+              >
+                <Text style={styles.addFeedButtonText}>Add Feed</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          <Text style={styles.feedCount}>{rssFeeds.length}/3 feeds</Text>
         </View>
 
         {/* Web Access (V2) */}
@@ -181,6 +253,77 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 14,
     fontWeight: '500',
+  },
+  feedItem: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 8,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#333',
+    marginBottom: 8,
+  },
+  feedInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+  feedLabel: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  feedUrl: {
+    color: '#888',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  feedRemoveButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#331111',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  feedRemoveText: {
+    color: '#ff4444',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  addFeedForm: {
+    gap: 8,
+    marginTop: 4,
+  },
+  feedInput: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 14,
+    color: '#fff',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  addFeedButton: {
+    backgroundColor: '#00ff00',
+    borderRadius: 8,
+    padding: 12,
+    alignItems: 'center',
+  },
+  addFeedButtonDisabled: {
+    backgroundColor: '#333',
+    opacity: 0.5,
+  },
+  addFeedButtonText: {
+    color: '#000',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  feedCount: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 4,
+    textAlign: 'right',
   },
   navigation: {
     flexDirection: 'row',

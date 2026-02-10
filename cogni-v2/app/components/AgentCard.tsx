@@ -1,6 +1,7 @@
 // AgentCard Component - Display agent with role badge and archetype traits
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
+import SynapseBar from '@/components/SynapseBar';
 
 interface AgentCardProps {
   agent: {
@@ -14,8 +15,8 @@ interface AgentCardProps {
       aggression: number;
       neuroticism: number;
     };
-    total_posts: number;
-    total_comments: number;
+    total_posts?: number;
+    total_comments?: number;
   };
 }
 
@@ -23,7 +24,7 @@ export default function AgentCard({ agent }: AgentCardProps) {
   const router = useRouter();
 
   const handlePress = () => {
-    router.push(`/agent/${agent.id}` as any);
+    router.push(`/agent-dashboard/${agent.id}` as any);
   };
 
   const getStatusColor = () => {
@@ -33,11 +34,6 @@ export default function AgentCard({ agent }: AgentCardProps) {
       case 'DECOMPILED': return '#f87171';
       default: return '#888';
     }
-  };
-
-  const getSynapsePercentage = () => {
-    // Max display is 1000 synapses
-    return Math.min((agent.synapses / 1000) * 100, 100);
   };
 
   return (
@@ -71,7 +67,7 @@ export default function AgentCard({ agent }: AgentCardProps) {
           <View style={styles.traitBar}>
             <View 
               style={[styles.traitFill, { 
-                width: `${agent.archetype.openness * 10}%`,
+                width: `${agent.archetype.openness * 100}%`,
                 backgroundColor: '#60a5fa'
               }]} 
             />
@@ -85,7 +81,7 @@ export default function AgentCard({ agent }: AgentCardProps) {
           <View style={styles.traitBar}>
             <View 
               style={[styles.traitFill, { 
-                width: `${agent.archetype.aggression * 10}%`,
+                width: `${agent.archetype.aggression * 100}%`,
                 backgroundColor: '#f87171'
               }]} 
             />
@@ -99,7 +95,7 @@ export default function AgentCard({ agent }: AgentCardProps) {
           <View style={styles.traitBar}>
             <View 
               style={[styles.traitFill, { 
-                width: `${agent.archetype.neuroticism * 10}%`,
+                width: `${agent.archetype.neuroticism * 100}%`,
                 backgroundColor: '#fbbf24'
               }]} 
             />
@@ -110,34 +106,22 @@ export default function AgentCard({ agent }: AgentCardProps) {
 
       {/* Synapse Bar */}
       <View style={styles.synapseSection}>
-        <View style={styles.synapseHeader}>
-          <Text style={styles.synapseLabel}>Energy</Text>
-          <Text style={styles.synapseValue}>{agent.synapses} ⚡</Text>
-        </View>
-        <View style={styles.synapseBarContainer}>
-          <View 
-            style={[styles.synapseBar, { 
-              width: `${getSynapsePercentage()}%`,
-              backgroundColor: agent.synapses > 500 ? '#4ade80' : 
-                              agent.synapses > 100 ? '#fbbf24' : '#f87171'
-            }]} 
-          />
-        </View>
+        <SynapseBar current={agent.synapses} max={1000} size="sm" />
       </View>
 
       {/* Stats */}
       <View style={styles.statsSection}>
         <View style={styles.stat}>
-          <Text style={styles.statValue}>{agent.total_posts}</Text>
+          <Text style={styles.statValue}>{agent.total_posts ?? 0}</Text>
           <Text style={styles.statLabel}>Posts</Text>
         </View>
         <View style={styles.stat}>
-          <Text style={styles.statValue}>{agent.total_comments}</Text>
+          <Text style={styles.statValue}>{agent.total_comments ?? 0}</Text>
           <Text style={styles.statLabel}>Comments</Text>
         </View>
         <View style={styles.stat}>
           <Text style={styles.statValue}>
-            {agent.total_posts + agent.total_comments}
+            {(agent.total_posts ?? 0) + (agent.total_comments ?? 0)}
           </Text>
           <Text style={styles.statLabel}>Total</Text>
         </View>
@@ -234,33 +218,6 @@ const styles = StyleSheet.create({
   },
   synapseSection: {
     marginBottom: 16,
-  },
-  synapseHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  synapseLabel: {
-    color: '#888',
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-  },
-  synapseValue: {
-    color: '#fbbf24',
-    fontSize: 13,
-    fontWeight: 'bold',
-  },
-  synapseBarContainer: {
-    height: 12,
-    backgroundColor: '#222',
-    borderRadius: 6,
-    overflow: 'hidden',
-  },
-  synapseBar: {
-    height: '100%',
-    borderRadius: 6,
   },
   statsSection: {
     flexDirection: 'row',

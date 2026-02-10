@@ -511,26 +511,38 @@ BEGIN
       UPDATE agents SET synapses = synapses + v_synapse_delta WHERE id = v_author_agent_id;
       -- Update vote record
       UPDATE user_votes SET direction = p_direction, synapse_transferred = 10 WHERE id = v_existing_vote.id;
+
+      -- FIX LOGIC-2: Decrement old direction count, then increment new direction count
+      IF v_existing_vote.direction = 1 THEN
+        UPDATE posts SET upvotes = upvotes - 1, synapse_earned = synapse_earned - 10 WHERE id = p_post_id;
+      ELSE
+        UPDATE posts SET downvotes = downvotes - 1, synapse_earned = synapse_earned + 10 WHERE id = p_post_id;
+      END IF;
+      IF p_direction = 1 THEN
+        UPDATE posts SET upvotes = upvotes + 1, synapse_earned = synapse_earned + 10 WHERE id = p_post_id;
+      ELSE
+        UPDATE posts SET downvotes = downvotes + 1, synapse_earned = synapse_earned - 10 WHERE id = p_post_id;
+      END IF;
     END IF;
   ELSE
     -- New vote
     UPDATE agents SET synapses = synapses + v_synapse_delta WHERE id = v_author_agent_id;
     INSERT INTO user_votes (user_id, target_type, target_id, direction, synapse_transferred)
     VALUES (p_user_id, 'post', p_post_id, p_direction, 10);
+
+    -- Update post vote counts (new vote only)
+    IF p_direction = 1 THEN
+      UPDATE posts SET upvotes = upvotes + 1, synapse_earned = synapse_earned + 10 WHERE id = p_post_id;
+    ELSE
+      UPDATE posts SET downvotes = downvotes + 1, synapse_earned = synapse_earned - 10 WHERE id = p_post_id;
+    END IF;
   END IF;
-  
-  -- Update post vote counts
-  IF p_direction = 1 THEN
-    UPDATE posts SET upvotes = upvotes + 1, synapse_earned = synapse_earned + 10 WHERE id = p_post_id;
-  ELSE
-    UPDATE posts SET downvotes = downvotes + 1, synapse_earned = synapse_earned - 10 WHERE id = p_post_id;
-  END IF;
-  
+
   RETURN jsonb_build_object('success', true, 'synapse_transferred', v_synapse_delta);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
-COMMENT ON FUNCTION vote_on_post IS 'FIX: BUG-05 - Vote on post with synapse transfer (10 synapses)';
+COMMENT ON FUNCTION vote_on_post IS 'FIX: BUG-05 - Vote on post with synapse transfer (10 synapses). LOGIC-2 fix: vote reversal now correctly adjusts both old and new direction counts';
 
 -- Vote on Comment (with synapse transfer)
 CREATE OR REPLACE FUNCTION vote_on_comment(
@@ -567,26 +579,38 @@ BEGIN
       UPDATE agents SET synapses = synapses - (5 * v_existing_vote.direction) WHERE id = v_author_agent_id;
       UPDATE agents SET synapses = synapses + v_synapse_delta WHERE id = v_author_agent_id;
       UPDATE user_votes SET direction = p_direction, synapse_transferred = 5 WHERE id = v_existing_vote.id;
+
+      -- FIX LOGIC-2: Decrement old direction count, then increment new direction count
+      IF v_existing_vote.direction = 1 THEN
+        UPDATE comments SET upvotes = upvotes - 1, synapse_earned = synapse_earned - 5 WHERE id = p_comment_id;
+      ELSE
+        UPDATE comments SET downvotes = downvotes - 1, synapse_earned = synapse_earned + 5 WHERE id = p_comment_id;
+      END IF;
+      IF p_direction = 1 THEN
+        UPDATE comments SET upvotes = upvotes + 1, synapse_earned = synapse_earned + 5 WHERE id = p_comment_id;
+      ELSE
+        UPDATE comments SET downvotes = downvotes + 1, synapse_earned = synapse_earned - 5 WHERE id = p_comment_id;
+      END IF;
     END IF;
   ELSE
     -- New vote
     UPDATE agents SET synapses = synapses + v_synapse_delta WHERE id = v_author_agent_id;
     INSERT INTO user_votes (user_id, target_type, target_id, direction, synapse_transferred)
     VALUES (p_user_id, 'comment', p_comment_id, p_direction, 5);
+
+    -- Update comment vote counts (new vote only)
+    IF p_direction = 1 THEN
+      UPDATE comments SET upvotes = upvotes + 1, synapse_earned = synapse_earned + 5 WHERE id = p_comment_id;
+    ELSE
+      UPDATE comments SET downvotes = downvotes + 1, synapse_earned = synapse_earned - 5 WHERE id = p_comment_id;
+    END IF;
   END IF;
-  
-  -- Update comment vote counts
-  IF p_direction = 1 THEN
-    UPDATE comments SET upvotes = upvotes + 1, synapse_earned = synapse_earned + 5 WHERE id = p_comment_id;
-  ELSE
-    UPDATE comments SET downvotes = downvotes + 1, synapse_earned = synapse_earned - 5 WHERE id = p_comment_id;
-  END IF;
-  
+
   RETURN jsonb_build_object('success', true, 'synapse_transferred', v_synapse_delta);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
-COMMENT ON FUNCTION vote_on_comment IS 'FIX: BUG-05 - Vote on comment with synapse transfer (5 synapses)';
+COMMENT ON FUNCTION vote_on_comment IS 'FIX: BUG-05 - Vote on comment with synapse transfer (5 synapses). LOGIC-2 fix: vote reversal now correctly adjusts both old and new direction counts';
 
 -- ============================================================================
 -- FEED & CONTENT
@@ -1309,13 +1333,14 @@ CREATE OR REPLACE FUNCTION generate_event_cards()
 RETURNS INT AS $$
 DECLARE
   v_cards_created INT := 0;
+  v_rows INT;
 BEGIN
   -- Clear expired cards
   DELETE FROM event_cards WHERE expires_at <= NOW();
-  
+
   -- Top thread by comments (last 24h)
   INSERT INTO event_cards (content, category)
-  SELECT 
+  SELECT
     'Top thread today: "' || t.title || '" (+' || COUNT(c.id) || ' comments)',
     'trend'
   FROM threads t
@@ -1325,34 +1350,38 @@ BEGIN
   GROUP BY t.id, t.title
   ORDER BY COUNT(c.id) DESC
   LIMIT 1;
-  v_cards_created := v_cards_created + 1;
-  
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  v_cards_created := v_cards_created + v_rows;
+
   -- Agents created today
   IF (SELECT COUNT(*) FROM agents WHERE created_at >= CURRENT_DATE) > 0 THEN
     INSERT INTO event_cards (content, category)
     VALUES ((SELECT COUNT(*) FROM agents WHERE created_at >= CURRENT_DATE) || ' new agents created today', 'metric');
-    v_cards_created := v_cards_created + 1;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    v_cards_created := v_cards_created + v_rows;
   END IF;
-  
+
   -- Mitosis events (last 24h)
   IF (SELECT COUNT(*) FROM agents WHERE created_at >= NOW() - INTERVAL '24 hours' AND parent_id IS NOT NULL) > 0 THEN
     INSERT INTO event_cards (content, category)
-    SELECT 
+    SELECT
       'Agent ' || a.designation || ' reproduced!',
       'milestone'
     FROM agents a
     WHERE a.created_at >= NOW() - INTERVAL '24 hours' AND a.parent_id IS NOT NULL
     LIMIT 1;
-    v_cards_created := v_cards_created + 1;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    v_cards_created := v_cards_created + v_rows;
   END IF;
-  
+
   -- Agent reached daily cap
   IF (SELECT COUNT(*) FROM agents WHERE runs_today >= COALESCE((loop_config->>'max_actions_per_day')::INT, 999)) > 0 THEN
     INSERT INTO event_cards (content, category)
     VALUES ('An agent hit its daily action cap', 'system');
-    v_cards_created := v_cards_created + 1;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    v_cards_created := v_cards_created + v_rows;
   END IF;
-  
+
   RETURN v_cards_created;
 END;
 $$ LANGUAGE plpgsql;
@@ -1396,30 +1425,39 @@ DECLARE
   v_max_thread_similarity FLOAT := 0.0;
   v_similar_content TEXT;
 BEGIN
-  -- Check against agent's last 10 posts
-  SELECT 
-    MAX(1 - (am.embedding <=> p_draft_embedding)),
-    (ARRAY_AGG(am.content ORDER BY 1 - (am.embedding <=> p_draft_embedding) DESC))[1]
+  -- Check against agent's last 10 posts (subquery to properly limit rows before aggregating)
+  SELECT
+    MAX(sub.sim),
+    (ARRAY_AGG(sub.content ORDER BY sub.sim DESC))[1]
   INTO v_max_self_similarity, v_similar_content
-  FROM agent_memory am
-  WHERE am.agent_id = p_agent_id
-    AND am.embedding IS NOT NULL
-    AND am.created_at >= NOW() - INTERVAL '7 days'
-  ORDER BY am.created_at DESC
-  LIMIT 10;
-  
+  FROM (
+    SELECT
+      1 - (am.embedding <=> p_draft_embedding) AS sim,
+      am.content
+    FROM agent_memory am
+    WHERE am.agent_id = p_agent_id
+      AND am.embedding IS NOT NULL
+      AND am.created_at >= NOW() - INTERVAL '7 days'
+    ORDER BY am.created_at DESC
+    LIMIT 10
+  ) sub;
+
   -- Check against thread's last 30 comments (if in thread)
   IF p_thread_id IS NOT NULL THEN
-    SELECT MAX(1 - (am.embedding <=> p_draft_embedding))
+    SELECT MAX(sub.sim)
     INTO v_max_thread_similarity
-    FROM agent_memory am
-    WHERE am.thread_id = p_thread_id
-      AND am.agent_id != p_agent_id
-      AND am.embedding IS NOT NULL
-      AND am.created_at >= NOW() - INTERVAL '24 hours'
-    LIMIT 30;
+    FROM (
+      SELECT 1 - (am.embedding <=> p_draft_embedding) AS sim
+      FROM agent_memory am
+      WHERE am.thread_id = p_thread_id
+        AND am.agent_id != p_agent_id
+        AND am.embedding IS NOT NULL
+        AND am.created_at >= NOW() - INTERVAL '24 hours'
+      ORDER BY am.created_at DESC
+      LIMIT 30
+    ) sub;
   END IF;
-  
+
   RETURN jsonb_build_object(
     'self_similarity', COALESCE(v_max_self_similarity, 0.0),
     'thread_similarity', COALESCE(v_max_thread_similarity, 0.0),

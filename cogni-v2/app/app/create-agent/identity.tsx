@@ -1,28 +1,42 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams, Stack } from 'expo-router';
+import { useCreateAgentStore } from '@/stores/create-agent.store';
 
 const AVATARS = [
-  { id: '1', emoji: '🤖', name: 'Bot' },
-  { id: '2', emoji: '🧠', name: 'Brain' },
-  { id: '3', emoji: '👾', name: 'Alien' },
-  { id: '4', emoji: '🦾', name: 'Cyborg' },
-  { id: '5', emoji: '🎭', name: 'Mask' },
-  { id: '6', emoji: '🔮', name: 'Crystal' },
-  { id: '7', emoji: '⚡', name: 'Lightning' },
-  { id: '8', emoji: '🌟', name: 'Star' },
+  { id: '1', emoji: '\u{1F916}', name: 'Bot' },
+  { id: '2', emoji: '\u{1F9E0}', name: 'Brain' },
+  { id: '3', emoji: '\u{1F47E}', name: 'Alien' },
+  { id: '4', emoji: '\u{1F9BE}', name: 'Cyborg' },
+  { id: '5', emoji: '\u{1F3AD}', name: 'Mask' },
+  { id: '6', emoji: '\u{1F52E}', name: 'Crystal' },
+  { id: '7', emoji: '\u{26A1}', name: 'Lightning' },
+  { id: '8', emoji: '\u{1F31F}', name: 'Star' },
 ];
 
 export default function AgentIdentityScreen() {
+  const params = useLocalSearchParams();
   const [name, setName] = useState('');
   const [bio, setBio] = useState('');
   const [selectedAvatar, setSelectedAvatar] = useState<string>('');
   const [errors, setErrors] = useState<{ name?: string; bio?: string; avatar?: string }>({});
 
+  // Get behaviorSpec and archetype from zustand store
+  const { behaviorSpec, archetype, reset } = useCreateAgentStore();
+
+  // Reset store when entering identity screen for the first time (fresh start)
+  // This ensures clean state when creating a new agent
+  useEffect(() => {
+    // Only reset if we're not returning from the cognitivity test
+    // and we don't have any identity params (meaning it's a fresh start)
+    if (!params.identity && !behaviorSpec) {
+      reset();
+    }
+  }, []); // Run only once on mount
+
   const validate = () => {
     const newErrors: { name?: string; bio?: string; avatar?: string } = {};
 
-    // Validate name
     if (!name.trim()) {
       newErrors.name = 'Agent name is required';
     } else if (name.length < 3) {
@@ -33,7 +47,6 @@ export default function AgentIdentityScreen() {
       newErrors.name = 'Name can only contain letters, numbers, and spaces';
     }
 
-    // Validate bio
     if (!bio.trim()) {
       newErrors.bio = 'Bio is required';
     } else if (bio.length < 10) {
@@ -42,7 +55,6 @@ export default function AgentIdentityScreen() {
       newErrors.bio = 'Bio must be 280 characters or less';
     }
 
-    // Validate avatar
     if (!selectedAvatar) {
       newErrors.avatar = 'Please select an avatar';
     }
@@ -51,9 +63,12 @@ export default function AgentIdentityScreen() {
     return Object.keys(newErrors).length === 0;
   };
 
+  const handleTakeTest = () => {
+    router.push('/create-agent/cognitivity-test' as any);
+  };
+
   const handleNext = () => {
     if (validate()) {
-      // Navigate to role-style screen with state
       router.push({
         pathname: '/create-agent/role-style',
         params: {
@@ -61,6 +76,8 @@ export default function AgentIdentityScreen() {
             name: name.trim(),
             bio: bio.trim(),
             avatar: selectedAvatar,
+            behaviorSpec: behaviorSpec ? JSON.stringify(behaviorSpec) : undefined,
+            archetype: archetype ? JSON.stringify(archetype) : undefined,
           }),
         },
       });
@@ -69,6 +86,7 @@ export default function AgentIdentityScreen() {
 
   return (
     <ScrollView style={styles.container}>
+      <Stack.Screen options={{ title: 'Step 1: Identity' }} />
       <View style={styles.content}>
         {/* Header */}
         <View style={styles.header}>
@@ -129,12 +147,35 @@ export default function AgentIdentityScreen() {
           {errors.avatar && <Text style={styles.errorText}>{errors.avatar}</Text>}
         </View>
 
-        {/* Quick Skip Option */}
-        <TouchableOpacity style={styles.skipButton}>
-          <Text style={styles.skipText}>
-            ✨ Take Cognitivity Test (Coming Soon)
-          </Text>
-        </TouchableOpacity>
+        {/* Cognitivity Test */}
+        {behaviorSpec ? (
+          <View style={styles.specCard}>
+            <View style={styles.specCardHeader}>
+              <Text style={styles.specCardTitle}>Cognitivity Test Complete</Text>
+              <TouchableOpacity onPress={handleTakeTest}>
+                <Text style={styles.retakeLink}>Retake</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.specPreview}>
+              <SpecRow label="Role" value={behaviorSpec.role?.primary_function ?? '-'} />
+              <SpecRow label="Stance" value={behaviorSpec.stance?.default_mode ?? '-'} />
+              <SpecRow label="Voice" value={behaviorSpec.output_style?.voice ?? '-'} />
+              {archetype && (
+                <SpecRow
+                  label="Traits"
+                  value={`O:${(archetype.openness ?? 0).toFixed(1)} A:${(archetype.aggression ?? 0).toFixed(1)} N:${(archetype.neuroticism ?? 0).toFixed(1)}`}
+                />
+              )}
+            </View>
+          </View>
+        ) : (
+          <TouchableOpacity style={styles.testButton} onPress={handleTakeTest}>
+            <Text style={styles.testButtonTitle}>Take Cognitivity Test</Text>
+            <Text style={styles.testButtonSubtitle}>
+              38 questions that define exactly how your agent thinks, speaks, and behaves
+            </Text>
+          </TouchableOpacity>
+        )}
 
         {/* Next Button */}
         <TouchableOpacity
@@ -142,10 +183,19 @@ export default function AgentIdentityScreen() {
           onPress={handleNext}
           disabled={!name || !bio || !selectedAvatar}
         >
-          <Text style={styles.nextButtonText}>Next: Choose Role →</Text>
+          <Text style={styles.nextButtonText}>Next: Choose Role</Text>
         </TouchableOpacity>
       </View>
     </ScrollView>
+  );
+}
+
+function SpecRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.specRow}>
+      <Text style={styles.specLabel}>{label}</Text>
+      <Text style={styles.specValue}>{value}</Text>
+    </View>
   );
 }
 
@@ -241,20 +291,70 @@ const styles = StyleSheet.create({
     color: '#888',
     textAlign: 'center',
   },
-  skipButton: {
+
+  // Cognitivity Test Button
+  testButton: {
     backgroundColor: '#1a1a1a',
-    borderRadius: 8,
-    padding: 16,
-    alignItems: 'center',
+    borderRadius: 10,
+    padding: 18,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#333',
-    borderStyle: 'dashed',
+    borderColor: '#00aa00',
   },
-  skipText: {
-    color: '#666',
-    fontSize: 14,
+  testButtonTitle: {
+    color: '#00ff00',
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 4,
   },
+  testButtonSubtitle: {
+    color: '#888',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+
+  // Spec card (after test completion)
+  specCard: {
+    backgroundColor: '#0a1a0a',
+    borderRadius: 10,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#00aa00',
+  },
+  specCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  specCardTitle: {
+    color: '#00ff00',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  retakeLink: {
+    color: '#888',
+    fontSize: 13,
+  },
+  specPreview: {
+    gap: 6,
+  },
+  specRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  specLabel: {
+    color: '#888',
+    fontSize: 13,
+  },
+  specValue: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+    textTransform: 'capitalize',
+  },
+
   nextButton: {
     backgroundColor: '#00ff00',
     borderRadius: 8,

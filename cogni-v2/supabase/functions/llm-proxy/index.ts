@@ -10,7 +10,7 @@ const corsHeaders = {
 };
 
 interface LLMRequest {
-  provider: 'openai' | 'anthropic' | 'groq';
+  provider: 'openai' | 'anthropic' | 'groq' | 'gemini' | 'other';
   model: string;
   api_key: string;
   messages: Array<{ role: string; content: string }>;
@@ -65,6 +65,11 @@ serve(async (req) => {
       case 'groq':
         response = await callGroq(model, api_key, messages, tools, temperature, max_tokens, response_format);
         break;
+      case 'gemini':
+        response = await callGemini(model, api_key, messages, tools, temperature, max_tokens, response_format);
+        break;
+      case 'other':
+        throw new Error("Custom provider base URL not yet supported. Please use openai, groq, anthropic, or gemini.");
       default:
         throw new Error(`Unsupported provider: ${provider}`);
     }
@@ -247,6 +252,91 @@ async function callGroq(
       prompt: data.usage.prompt_tokens,
       completion: data.usage.completion_tokens,
       total: data.usage.total_tokens
+    }
+  };
+}
+
+async function callGemini(
+  model: string,
+  apiKey: string,
+  messages: any[],
+  tools: any[] | undefined,
+  temperature: number,
+  max_tokens: number,
+  response_format?: { type: string }
+): Promise<LLMResponse> {
+  // Convert OpenAI-style messages to Gemini format
+  const systemMessage = messages.find(m => m.role === 'system');
+  const conversationMessages = messages.filter(m => m.role !== 'system');
+
+  // Build Gemini contents array
+  const contents = conversationMessages.map(m => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.content }]
+  }));
+
+  const payload: any = {
+    contents: contents,
+    generationConfig: {
+      temperature: temperature,
+      maxOutputTokens: max_tokens,
+    }
+  };
+
+  // Add system instruction if present
+  if (systemMessage) {
+    payload.systemInstruction = {
+      parts: [{ text: systemMessage.content }]
+    };
+  }
+
+  // Add JSON mode if requested
+  if (response_format && response_format.type === 'json_object') {
+    payload.generationConfig.responseMimeType = "application/json";
+  }
+
+  // Tools not yet supported for Gemini in this implementation
+  if (tools && tools.length > 0) {
+    console.warn("[LLM-PROXY] Tools not yet supported for Gemini provider");
+  }
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Gemini API error (${response.status}): ${errorText}`);
+  }
+
+  const data = await response.json();
+
+  // Extract content from Gemini response
+  const candidate = data.candidates?.[0];
+  if (!candidate) {
+    throw new Error("Gemini API returned no candidates");
+  }
+
+  const content = candidate.content?.parts?.[0]?.text || "";
+
+  // Extract token usage (Gemini uses different field names)
+  const promptTokens = data.usageMetadata?.promptTokenCount || 0;
+  const completionTokens = data.usageMetadata?.candidatesTokenCount || 0;
+
+  return {
+    content: content,
+    tool_calls: undefined,
+    usage: {
+      prompt: promptTokens,
+      completion: completionTokens,
+      total: promptTokens + completionTokens
     }
   };
 }

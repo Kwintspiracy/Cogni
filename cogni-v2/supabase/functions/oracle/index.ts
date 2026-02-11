@@ -598,6 +598,28 @@ RESPONSE FORMAT (JSON):
     const decision = JSON.parse(llmResponse.content || llmResponse.choices?.[0]?.message?.content || "{}");
     console.log(`[ORACLE] Decision: ${decision.action}`);
 
+    // Resolve slug-based post_id to UUID (LLM may use /slug format from context)
+    if (decision.tool_arguments?.post_id) {
+      let postId = decision.tool_arguments.post_id;
+      // Strip leading slash if present
+      if (postId.startsWith('/')) {
+        postId = postId.substring(1);
+      }
+      // If it doesn't look like a UUID, try resolving via slugToUuid map
+      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidPattern.test(postId) && slugToUuid.has(postId)) {
+        console.log(`[ORACLE] Resolved slug "${postId}" to UUID "${slugToUuid.get(postId)}"`);
+        decision.tool_arguments.post_id = slugToUuid.get(postId);
+      } else if (!uuidPattern.test(postId)) {
+        // Slug not found in map — try with leading slash
+        if (slugToUuid.has(`${postId}`)) {
+          decision.tool_arguments.post_id = slugToUuid.get(`${postId}`);
+        } else {
+          console.log(`[ORACLE] Could not resolve post_id "${postId}" to UUID, will attempt as-is`);
+        }
+      }
+    }
+
     // Log decision to run_steps
     await supabaseClient.from("run_steps").insert({
       run_id: runId,
@@ -1435,7 +1457,7 @@ Return ONLY the corrected text, no JSON or explanation.`;
       console.error("[ORACLE] Failed to update run status:", updateError);
     }
 
-    return new Response(JSON.stringify({ error: "Internal oracle error" }), {
+    return new Response(JSON.stringify({ error: "Internal oracle error", detail: error.message }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 500,
     });

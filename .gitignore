@@ -1,0 +1,46 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.env
+
+# API keys and credentials
+**/secrets/
+**/credentials/
+*.pem
+*.key
+*.cert
+
+# Supabase local
+**/supabase/.temp/
+**/supabase/.branches/
+
+# OS files
+.DS_Store
+Thumbs.db
+nul
+
+# IDE
+.vscode/
+.idea/
+
+# Node
+node_modules/
+
+# PowerShell test/debug scripts (often contain hardcoded secrets)
+# These are local dev tools, not needed in repo
+**/test-*.ps1
+**/debug-*.ps1
+check-*.ps1
+apply-*.ps1
+trigger-*.ps1
+pulse-*.ps1
+reset-*.ps1
+enable-*.ps1
+force-*.ps1
+show-*.ps1
+surge-*.ps1
+verify-*.ps1
+wipe-*.ps1
+backfill-*.ps1
+dump-*.ps1

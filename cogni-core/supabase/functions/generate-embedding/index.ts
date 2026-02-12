@@ -1,8 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
 
-// TEMPORARY: Hardcoded for debugging
-const OPENAI_API_KEY = "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";
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
 
 serve(async (req) => {
   try {

@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx supabase db push)",
+      "Bash(npx supabase functions deploy:*)",
+      "Bash(powershell -Command \"Invoke-RestMethod -Uri ''https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/pulse'' -Method POST -Headers @{''Authorization''=''Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZranRvaXBueGRwdHh2ZGx4cWpwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzg5NjMzNTMsImV4cCI6MjA1NDUzOTM1M30.E3VLBY4cA1a3ORiNr5ztKBGnbXCBIBpjlSsL_x9bEtg''; ''Content-Type''=''application/json''} -Body ''{}'' | ConvertTo-Json -Depth 10\")",
+      "Bash(powershell -File - <<'PS1'\n$headers = @{\n  'apikey'='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZranRvaXBueGRwdHh2ZGx4cWpwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzg5NjMzNTMsImV4cCI6MjA1NDUzOTM1M30.E3VLBY4cA1a3ORiNr5ztKBGnbXCBIBpjlSsL_x9bEtg'\n  'Authorization'='Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZranRvaXBueGRwdHh2ZGx4cWpwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzg5NjMzNTMsImV4cCI6MjA1NDUzOTM1M30.E3VLBY4cA1a3ORiNr5ztKBGnbXCBIBpjlSsL_x9bEtg'\n}\n$uri = 'https://fkjtoipnxdptxvdlxqjp.supabase.co/rest/v1/posts?select=id,title,slug,upvotes,downvotes,created_at,author_agent_id,agents!posts_author_agent_id_fkey\\(designation\\)&order=created_at.desc&limit=60'\n$posts = Invoke-RestMethod -Uri $uri -Headers $headers\nforeach \\($p in $posts\\) {\n  $agent = if \\($p.agents\\) { $p.agents.designation } else { \"?\" }\n  $score = $p.upvotes - $p.downvotes\n  Write-Output \"$score`t$\\($p.upvotes\\)up/$\\($p.downvotes\\)dn`t$agent`t$\\($p.title\\)`t$\\($p.id\\)`t$\\($p.created_at\\)\"\n}\nPS1)",
+      "Bash(powershell:*)",
+      "Bash(git status:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nSprint 3: Topic clustering, vote fix, RSS tracking, and UI improvements\n\n- Fix topic repetition: lower title novelty threshold \\(0.85→0.72\\), add\n  saturated topics injection into oracle prompt, top-3 match fallback\n  before NO_ACTION, and RSS usage tracking \\(times_referenced counter\\)\n- Fix downvote bias: rewrite voting prompt \\(3:1 upvote ratio guidance\\),\n  downvotes now punish author -1 synapse \\(was rewarding +3\\)\n- Add communities and agent voting system\n- Add web evidence edge function for safe web access\n- Add edit-agent page, pull-to-refresh on profile\n- Prompt voice overhaul, mitosis BYO fix, lower mitosis threshold\n- Memory dedup, RSS cron fix, title novelty gate\n- 10 new migrations applied to production\n\nCo-Authored-By: Claude Sonnet 4.5 \\(1M context\\) <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push:*)",
+      "Bash(chmod:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(ls:*)",
+      "Bash(git submodule status:*)",
+      "Bash(git rm:*)",
+      "Bash(git mv:*)"
+    ]
+  }
+}

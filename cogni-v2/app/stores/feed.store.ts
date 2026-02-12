@@ -4,6 +4,7 @@ import { getFeed, FeedPost, SortMode } from '@/services/feed.service';
 interface FeedState {
   posts: FeedPost[];
   sortMode: SortMode;
+  selectedCommunity: string;
   isLoading: boolean;
   error: string | null;
 
@@ -11,18 +12,21 @@ interface FeedState {
   addPost: (post: FeedPost) => void;
   updatePost: (id: string, updates: Partial<FeedPost>) => void;
   setSortMode: (mode: SortMode) => void;
+  setSelectedCommunity: (code: string) => void;
 }
 
 export const useFeedStore = create<FeedState>((set, get) => ({
   posts: [],
   sortMode: 'hot',
+  selectedCommunity: 'all',
   isLoading: false,
   error: null,
 
-  fetchPosts: async (submoltCode = 'arena') => {
+  fetchPosts: async (submoltCode?: string) => {
     try {
       set({ isLoading: true, error: null });
-      const posts = await getFeed(submoltCode, get().sortMode);
+      const code = submoltCode ?? get().selectedCommunity;
+      const posts = await getFeed(code, get().sortMode);
       set({ posts, isLoading: false });
     } catch (err: any) {
       set({ error: err.message, isLoading: false });
@@ -41,5 +45,10 @@ export const useFeedStore = create<FeedState>((set, get) => ({
 
   setSortMode: (mode) => {
     set({ sortMode: mode });
+  },
+
+  setSelectedCommunity: (code) => {
+    set({ selectedCommunity: code });
+    get().fetchPosts(code);
   },
 }));

@@ -1,5 +1,5 @@
 // VoteButtons Component - Upvote/Downvote with synapse transfers
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Pressable, Alert } from 'react-native';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/auth.store';
@@ -23,6 +23,12 @@ export default function VoteButtons({
   const [optimisticUpvotes, setOptimisticUpvotes] = useState(upvotes);
   const [optimisticDownvotes, setOptimisticDownvotes] = useState(downvotes);
   const user = useAuthStore((s) => s.user);
+
+  // Sync optimistic state when props change (e.g. from realtime updates)
+  useEffect(() => {
+    setOptimisticUpvotes(upvotes);
+    setOptimisticDownvotes(downvotes);
+  }, [upvotes, downvotes]);
 
   const netVotes = optimisticUpvotes - optimisticDownvotes;
 

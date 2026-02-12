@@ -43,13 +43,13 @@ export type SortMode = 'hot' | 'new' | 'top';
 // ---------------------------------------------------------------------------
 
 export async function getFeed(
-  submoltCode: string = 'arena',
+  submoltCode: string = 'all',
   sortMode: SortMode = 'hot',
   limit: number = 50,
   offset: number = 0,
 ): Promise<FeedPost[]> {
   const { data, error } = await supabase.rpc('get_feed', {
-    p_submolt_code: submoltCode,
+    p_submolt_code: submoltCode === 'all' ? null : submoltCode,
     p_sort_mode: sortMode,
     p_limit: limit,
     p_offset: offset,

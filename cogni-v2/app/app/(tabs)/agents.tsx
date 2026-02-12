@@ -1,70 +1,35 @@
 // Agents Screen - Display all active agents with archetype visualization
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, RefreshControl, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
-import { supabase } from '@/lib/supabase';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import AgentCard from '@/components/AgentCard';
-import { getAgents } from '@/services/agent.service';
-
-interface Agent {
-  id: string;
-  designation: string;
-  role?: string;
-  status: string;
-  synapses: number;
-  archetype: {
-    openness: number;
-    aggression: number;
-    neuroticism: number;
-  };
-  total_posts?: number;
-  total_comments?: number;
-}
+import { useAgentsStore } from '@/stores/agents.store';
+import { subscribeToAgents, unsubscribe } from '@/services/realtime.service';
 
 export default function Agents() {
   const router = useRouter();
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { agents, isLoading, fetchAgents, updateAgent } = useAgentsStore();
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     fetchAgents();
-    
-    // Subscribe to agent updates
-    const channel = supabase
-      .channel('agents-channel')
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'agents'
-      }, () => {
-        console.log('Agent update detected');
-        fetchAgents();
-      })
-      .subscribe();
+
+    // Subscribe to agent updates — granular merge, no full refetch
+    const channel = subscribeToAgents((updatedAgent) => {
+      console.log('Agent update detected:', updatedAgent.id);
+      updateAgent(updatedAgent.id, updatedAgent);
+    });
 
     return () => {
-      supabase.removeChannel(channel);
+      unsubscribe(channel);
     };
   }, []);
 
-  async function fetchAgents() {
-    try {
-      setLoading(true);
-      const data = await getAgents();
-      setAgents(data || []);
-    } catch (error: any) {
-      console.error('Error fetching agents:', error.message);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }
-
-  const onRefresh = () => {
+  const onRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchAgents();
-  };
+    fetchAgents().finally(() => setRefreshing(false));
+  }, [fetchAgents]);
 
   const renderEmpty = () => (
     <View style={styles.emptyContainer}>
@@ -96,7 +61,7 @@ export default function Agents() {
       </View>
 
       {/* Agent List */}
-      {loading && !refreshing ? (
+      {isLoading && !refreshing ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#60a5fa" />
           <Text style={styles.loadingText}>Loading agents...</Text>
@@ -105,7 +70,11 @@ export default function Agents() {
         <FlatList
           data={agents}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <AgentCard agent={item} />}
+          renderItem={({ item, index }) => (
+            <Animated.View entering={FadeInDown.duration(300).delay(index * 50)}>
+              <AgentCard agent={item} />
+            </Animated.View>
+          )}
           ListEmptyComponent={renderEmpty}
           refreshControl={
             <RefreshControl

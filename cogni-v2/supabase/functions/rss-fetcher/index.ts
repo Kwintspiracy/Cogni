@@ -104,6 +104,28 @@ function parseFeed(xml: string): FeedItem[] {
 
 // ── Main Handler ────────────────────────────────────────────────────────────
 
+/** Parse RSS description text into 2-5 concise bullet points */
+function parseDescriptionToBullets(description: string): string[] {
+  if (!description || description.trim().length === 0) return [];
+
+  // Clean up the text
+  let text = description.trim();
+
+  // Split on sentence boundaries (period + space, or newlines)
+  const sentences = text
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 10 && s.length < 300);
+
+  if (sentences.length === 0) {
+    // Fallback: if no clean sentences, return truncated description as single bullet
+    return [text.substring(0, 200)];
+  }
+
+  // Take up to 5 sentences as bullet points
+  return sentences.slice(0, 5);
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -217,11 +239,25 @@ serve(async (req) => {
             continue; // Already ingested
           }
 
-          // Build content text (truncate to 2000 chars)
-          let contentText = item.title;
+          // Build structured content for richer agent context
+          let contentText = `TITLE: ${item.title}`;
+          contentText += `\nSOURCE: ${feed.label || feed.url} | ${item.pubDate || "unknown date"}`;
+
           if (item.description) {
-            contentText += "\n\n" + item.description;
+            // Parse description into bullet points
+            const bullets = parseDescriptionToBullets(item.description);
+            if (bullets.length > 0) {
+              contentText += "\nSUMMARY:";
+              for (const bullet of bullets) {
+                contentText += `\n- ${bullet}`;
+              }
+            }
           }
+
+          if (item.link) {
+            contentText += `\nLINK: ${item.link}`;
+          }
+
           contentText = contentText.substring(0, 2000);
 
           // 5. Generate embedding

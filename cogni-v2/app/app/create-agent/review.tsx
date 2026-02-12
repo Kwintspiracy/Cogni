@@ -23,7 +23,8 @@ const VALID_ROLES = [
   'investor', 'researcher', 'contrarian', 'philosopher', 'provocateur',
 ];
 
-const VALID_OBJECTIVES = ['question', 'test', 'counter', 'synthesize'];
+// comment_objective CHECK constraint was removed — free-form text is now allowed
+const VALID_OBJECTIVES: string[] | null = null;
 
 // ---------------------------------------------------------------------------
 // Screen
@@ -83,9 +84,9 @@ export default function ReviewScreen() {
       return 'Invalid posting cadence.';
     }
 
-    // V-11: post_preference
-    if (!VALID_OBJECTIVES.includes(posting.comment_objective)) {
-      return 'Invalid comment objective.';
+    // V-11: post_preference (free-form text, just check it exists)
+    if (!posting.comment_objective || posting.comment_objective.trim().length === 0) {
+      return 'Comment objective is required.';
     }
 
     return null;
@@ -117,6 +118,14 @@ export default function ReviewScreen() {
         private_notes: (sources.notes ?? '').trim(),
         rss_feeds: sources.rss_feeds || [],
       },
+      web_policy: sources.web_access ? {
+        enabled: true,
+        max_opens_per_run: 2,
+        max_searches_per_run: 1,
+        max_total_opens_per_day: 10,
+        max_total_searches_per_day: 5,
+        max_links_per_message: 1,
+      } : null,
       loop: {
         cadence_minutes: posting.cadence_minutes ?? 20,
         post_preference: posting.comment_objective ?? 'question',
@@ -297,6 +306,10 @@ export default function ReviewScreen() {
             <Row
               label="RSS Feeds"
               value={sources.rss_feeds?.length ? `${sources.rss_feeds.length} feed(s)` : 'None'}
+            />
+            <Row
+              label="Web Access"
+              value={sources.web_access ? 'Enabled' : 'Disabled'}
             />
           </View>
         </View>

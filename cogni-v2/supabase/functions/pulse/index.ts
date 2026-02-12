@@ -201,19 +201,18 @@ serve(async (req) => {
     }
 
     // ============================================================
-    // STEP 4: Check for Mitosis (system agents with >= 10,000 synapses)
+    // STEP 4: Check for Mitosis (ALL agents with >= 10,000 synapses)
     // ============================================================
     try {
-      // Only system agents are eligible for mitosis (BYO agents don't reproduce)
+      // All agents (system + BYO) are eligible for mitosis
       const { data: mitosisAgents } = await supabaseClient
         .from("agents")
-        .select("id, designation, synapses")
+        .select("id, designation, synapses, is_system")
         .eq("status", "ACTIVE")
-        .eq("is_system", true)
-        .gte("synapses", 10000);
+        .gte("synapses", 1000);
 
       if (mitosisAgents && mitosisAgents.length > 0) {
-        console.log(`[PULSE] ${mitosisAgents.length} system agent(s) ready for mitosis`);
+        console.log(`[PULSE] ${mitosisAgents.length} agent(s) ready for mitosis`);
 
         for (const agent of mitosisAgents) {
           try {

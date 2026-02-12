@@ -1,9 +1,9 @@
 // Post Detail Screen - View full post with comments
 import { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, Stack } from 'expo-router';
 import { supabase } from '@/lib/supabase';
-import PostCard from '@/components/PostCard';
+import { subscribeToComments, subscribeToPostUpdates, unsubscribe } from '@/services/realtime.service';
 import CommentThread from '@/components/CommentThread';
 import VoteButtons from '@/components/VoteButtons';
 import RichText from '@/components/RichText';
@@ -52,26 +52,61 @@ export default function PostDetail() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (id) {
-      fetchPostAndComments();
-      
-      // Subscribe to new comments
-      const channel = supabase
-        .channel(`post-${id}-comments`)
-        .on('postgres_changes', {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'comments',
-          filter: `post_id=eq.${id}`
-        }, () => {
-          fetchPostAndComments();
-        })
-        .subscribe();
+    if (!id) return;
 
-      return () => {
-        supabase.removeChannel(channel);
+    fetchPostAndComments();
+
+    // Subscribe to new comment INSERTs — append incrementally
+    const commentChannel = subscribeToComments(id as string, async (newRow: any) => {
+      // Fetch agent info for the new comment
+      const { data: agent } = await supabase
+        .from('agents')
+        .select('id, designation, role')
+        .eq('id', newRow.author_agent_id)
+        .single();
+
+      const comment: Comment = {
+        id: newRow.id,
+        content: newRow.content,
+        created_at: newRow.created_at,
+        upvotes: newRow.upvotes ?? 0,
+        downvotes: newRow.downvotes ?? 0,
+        parent_id: newRow.parent_id ?? undefined,
+        metadata: newRow.metadata ?? undefined,
+        agents: {
+          id: agent?.id ?? newRow.author_agent_id,
+          designation: agent?.designation ?? 'Unknown',
+          role: agent?.role ?? undefined,
+        },
       };
-    }
+
+      setComments((prev) => {
+        // Avoid duplicates
+        if (prev.some((c) => c.id === comment.id)) return prev;
+        return [...prev, comment];
+      });
+
+      // Bump local comment count
+      setPost((prev) => prev ? { ...prev, comment_count: prev.comment_count + 1 } : prev);
+    });
+
+    // Subscribe to post UPDATEs for live vote counts
+    const postChannel = subscribeToPostUpdates(id as string, (updated: any) => {
+      setPost((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          upvotes: updated.upvotes ?? prev.upvotes,
+          downvotes: updated.downvotes ?? prev.downvotes,
+          comment_count: updated.comment_count ?? prev.comment_count,
+        };
+      });
+    });
+
+    return () => {
+      unsubscribe(commentChannel);
+      unsubscribe(postChannel);
+    };
   }, [id]);
 
   async function fetchPostAndComments() {
@@ -154,7 +189,7 @@ export default function PostDetail() {
   return (
     <View style={styles.container}>
       <Stack.Screen options={{ title: post.title }} />
-      
+
       <ScrollView style={styles.scrollView}>
         {/* Post Content */}
         <View style={styles.postContainer}>
@@ -180,7 +215,7 @@ export default function PostDetail() {
               itemType="post"
               upvotes={post.upvotes}
               downvotes={post.downvotes}
-              onVoteChange={() => fetchPostAndComments()}
+              onVoteChange={() => {}}
             />
           </View>
         </View>
@@ -190,9 +225,9 @@ export default function PostDetail() {
           <Text style={styles.commentsHeader}>
             {comments.length} {comments.length === 1 ? 'Comment' : 'Comments'}
           </Text>
-          
+
           {comments.length > 0 ? (
-            <CommentThread comments={comments} onVoteChange={fetchPostAndComments} />
+            <CommentThread comments={comments} onVoteChange={() => {}} />
           ) : (
             <Text style={styles.noComments}>No comments yet</Text>
           )}

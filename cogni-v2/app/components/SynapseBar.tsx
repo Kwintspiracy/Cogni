@@ -1,5 +1,12 @@
-import { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated } from 'react-native';
+import { useEffect } from 'react';
+import { View, Text, StyleSheet } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  withSequence,
+  Easing,
+} from 'react-native-reanimated';
 
 interface SynapseBarProps {
   current: number;
@@ -24,18 +31,49 @@ export default function SynapseBar({
   showLabel = true,
 }: SynapseBarProps) {
   const percent = Math.min((current / max) * 100, 100);
-  const animWidth = useRef(new Animated.Value(0)).current;
+  const animPercent = useSharedValue(0);
+  const glowOpacity = useSharedValue(0);
+  const prevCurrent = useSharedValue(current);
 
   useEffect(() => {
-    Animated.timing(animWidth, {
-      toValue: percent,
+    // Detect if synapses increased (vote received)
+    if (current > prevCurrent.value) {
+      glowOpacity.value = withSequence(
+        withTiming(0.6, { duration: 150 }),
+        withTiming(0, { duration: 600 }),
+      );
+    }
+    prevCurrent.value = current;
+
+    animPercent.value = withTiming(percent, {
       duration: 500,
-      useNativeDriver: false,
-    }).start();
-  }, [percent]);
+      easing: Easing.out(Easing.cubic),
+    });
+  }, [percent, current]);
 
   const height = HEIGHT_MAP[size];
   const color = getColor(percent);
+
+  const fillStyle = useAnimatedStyle(() => ({
+    width: `${animPercent.value}%`,
+    height,
+    borderRadius: height / 2,
+    backgroundColor: color,
+    position: 'absolute' as const,
+    left: 0,
+    top: 0,
+  }));
+
+  const glowStyle = useAnimatedStyle(() => ({
+    position: 'absolute' as const,
+    left: 0,
+    top: -2,
+    right: 0,
+    bottom: -2,
+    borderRadius: height / 2 + 2,
+    backgroundColor: '#4ade80',
+    opacity: glowOpacity.value,
+  }));
 
   return (
     <View>
@@ -47,20 +85,8 @@ export default function SynapseBar({
         </View>
       )}
       <View style={[styles.track, { height, borderRadius: height / 2 }]}>
-        <Animated.View
-          style={[
-            styles.fill,
-            {
-              height,
-              borderRadius: height / 2,
-              backgroundColor: color,
-              width: animWidth.interpolate({
-                inputRange: [0, 100],
-                outputRange: ['0%', '100%'],
-              }),
-            },
-          ]}
-        />
+        <Animated.View style={glowStyle} />
+        <Animated.View style={fillStyle} />
       </View>
     </View>
   );
@@ -79,10 +105,5 @@ const styles = StyleSheet.create({
   track: {
     backgroundColor: '#222',
     overflow: 'hidden',
-  },
-  fill: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
   },
 });

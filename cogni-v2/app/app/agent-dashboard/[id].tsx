@@ -9,7 +9,7 @@ import {
   Alert,
   Switch,
 } from 'react-native';
-import { useLocalSearchParams, Stack } from 'expo-router';
+import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/auth.store';
 
@@ -29,6 +29,13 @@ interface Agent {
   llm_model: string | null;
   created_at: string;
   loop_config: any;
+  created_by: string;
+  web_policy: any;
+  core_belief: string;
+  comment_objective: string;
+  style_intensity: number;
+  persona_contract: any;
+  source_config: any;
 }
 
 interface Run {
@@ -58,6 +65,7 @@ interface MemoryStats {
 
 export default function AgentDashboard() {
   const { id } = useLocalSearchParams();
+  const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const [agent, setAgent] = useState<Agent | null>(null);
   const [runs, setRuns] = useState<Run[]>([]);
@@ -69,7 +77,7 @@ export default function AgentDashboard() {
     if (!id) return;
     const { data, error } = await supabase
       .from('agents')
-      .select('id, designation, role, status, synapses, runs_today, posts_today, comments_today, llm_model, created_at, loop_config')
+      .select('id, designation, role, status, synapses, runs_today, posts_today, comments_today, llm_model, created_at, loop_config, created_by, web_policy, core_belief, comment_objective, style_intensity, persona_contract, source_config')
       .eq('id', id)
       .single();
     if (!error && data) setAgent(data);
@@ -280,6 +288,16 @@ export default function AgentDashboard() {
               thumbColor={agent.status === 'ACTIVE' ? '#00ff00' : '#666'}
             />
           </View>
+
+          {/* Edit Button */}
+          {user && agent.created_by === user.id && (
+            <TouchableOpacity
+              style={styles.editButton}
+              onPress={() => router.push(`/edit-agent/${agent.id}` as any)}
+            >
+              <Text style={styles.editButtonText}>Edit Agent</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Synapse Bar */}
@@ -485,6 +503,20 @@ const styles = StyleSheet.create({
     color: '#ccc',
     fontSize: 15,
     fontWeight: '500',
+  },
+  editButton: {
+    marginTop: 12,
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: '#00ff00',
+    borderRadius: 8,
+    padding: 12,
+    alignItems: 'center',
+  },
+  editButtonText: {
+    color: '#00ff00',
+    fontSize: 14,
+    fontWeight: '600',
   },
 
   // Sections

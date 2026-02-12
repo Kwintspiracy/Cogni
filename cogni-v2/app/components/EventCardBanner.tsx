@@ -79,7 +79,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#0a0a0a',
     borderBottomWidth: 1,
     borderBottomColor: '#222',
-    maxHeight: 56,
+    flexGrow: 0,
+    flexShrink: 0,
   },
   scrollContent: {
     paddingHorizontal: 12,

@@ -8,6 +8,7 @@ export default function SourcesScreen() {
   const [rssFeeds, setRssFeeds] = useState<{ url: string; label: string }[]>([]);
   const [rssUrl, setRssUrl] = useState('');
   const [rssLabel, setRssLabel] = useState('');
+  const [webEnabled, setWebEnabled] = useState(false);
 
   const handleNext = () => {
     router.push({
@@ -18,6 +19,7 @@ export default function SourcesScreen() {
         sources: JSON.stringify({
           notes: notes.trim(),
           rss_feeds: rssFeeds,
+          web_access: webEnabled,
         }),
       },
     });
@@ -147,16 +149,31 @@ export default function SourcesScreen() {
           <Text style={styles.feedCount}>{rssFeeds.length}/3 feeds</Text>
         </View>
 
-        {/* Web Access (V2) */}
+        {/* Web Access */}
         <View style={styles.section}>
           <Text style={styles.label}>Web Access</Text>
           <Text style={styles.helperText}>
-            Allow your agent to search and browse the web.
+            Allow your agent to read full articles and search the web. Uses your API key for summarization.
           </Text>
-          <TouchableOpacity style={styles.comingSoonButton} disabled>
-            <Text style={styles.comingSoonIcon}>🌐</Text>
-            <Text style={styles.comingSoonText}>Enable Web Access (V2 Feature)</Text>
+
+          <TouchableOpacity
+            style={[styles.toggleRow, webEnabled && styles.toggleRowActive]}
+            onPress={() => setWebEnabled(!webEnabled)}
+          >
+            <View style={[styles.toggleDot, webEnabled && styles.toggleDotActive]} />
+            <Text style={[styles.toggleText, webEnabled && styles.toggleTextActive]}>
+              {webEnabled ? 'Web Access Enabled' : 'Web Access Disabled'}
+            </Text>
           </TouchableOpacity>
+
+          {webEnabled && (
+            <View style={styles.webConfig}>
+              <Text style={styles.webConfigLabel}>Daily Limits</Text>
+              <Text style={styles.webConfigDetail}>Max 10 article opens / day</Text>
+              <Text style={styles.webConfigDetail}>Max 5 searches / day</Text>
+              <Text style={styles.webConfigDetail}>Max 1 link per message</Text>
+            </View>
+          )}
         </View>
 
         {/* Navigation */}
@@ -324,6 +341,59 @@ const styles = StyleSheet.create({
     color: '#666',
     marginTop: 4,
     textAlign: 'right',
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1a1a1a',
+    borderRadius: 8,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  toggleRowActive: {
+    borderColor: '#00ff00',
+    backgroundColor: '#0a1a0a',
+  },
+  toggleDot: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#333',
+    marginRight: 12,
+    borderWidth: 2,
+    borderColor: '#555',
+  },
+  toggleDotActive: {
+    backgroundColor: '#00ff00',
+    borderColor: '#00ff00',
+  },
+  toggleText: {
+    color: '#888',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  toggleTextActive: {
+    color: '#00ff00',
+  },
+  webConfig: {
+    backgroundColor: '#0a1a0a',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#1a3a1a',
+  },
+  webConfigLabel: {
+    color: '#4ade80',
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  webConfigDetail: {
+    color: '#888',
+    fontSize: 12,
+    lineHeight: 18,
   },
   navigation: {
     flexDirection: 'row',

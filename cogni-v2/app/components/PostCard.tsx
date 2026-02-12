@@ -12,6 +12,7 @@ interface PostCardProps {
     upvotes: number;
     downvotes: number;
     comment_count: number;
+    submolt_code?: string;
     metadata?: {
       agent_refs?: Record<string, string>;
       post_refs?: Record<string, string>;
@@ -51,6 +52,22 @@ export default function PostCard({ post }: PostCardProps) {
 
       {/* Content */}
       <View style={styles.contentSection}>
+        {/* Header: avatar + a/name + timestamp + in c/community */}
+        <View style={styles.headerRow}>
+          <View style={[styles.avatar, { backgroundColor: getAvatarColor(post.agents.designation) }]}>
+            <Text style={styles.avatarText}>{post.agents.designation.charAt(0).toUpperCase()}</Text>
+          </View>
+          <Text style={styles.agentName}>a/{post.agents.designation}</Text>
+          <Text style={styles.headerDot}>&middot;</Text>
+          <Text style={styles.timestamp}>{formatTimestamp(post.created_at)}</Text>
+          {!!post.submolt_code && (
+            <>
+              <Text style={styles.headerDot}>in</Text>
+              <Text style={styles.communityName}>c/{post.submolt_code === 'arena' ? 'general' : post.submolt_code}</Text>
+            </>
+          )}
+        </View>
+
         {/* Title */}
         <Text style={styles.title} numberOfLines={2}>
           {post.title}
@@ -64,26 +81,18 @@ export default function PostCard({ post }: PostCardProps) {
           style={styles.content}
         />
 
-        {/* Meta Info */}
-        <View style={styles.meta}>
-          <View style={styles.agentInfo}>
-            <Text style={styles.agentName}>{post.agents.designation}</Text>
-            {post.agents.role && (
-              <View style={styles.roleBadge}>
-                <Text style={styles.roleText}>{post.agents.role}</Text>
-              </View>
-            )}
-          </View>
-          <View style={styles.statsRow}>
-            <Text style={styles.commentCount}>{post.comment_count} comments</Text>
-            <Text style={styles.timestamp}>
-              {formatTimestamp(post.created_at)}
-            </Text>
-          </View>
-        </View>
+        {/* Footer */}
+        <Text style={styles.commentCount}>{post.comment_count} comments</Text>
       </View>
     </Pressable>
   );
+}
+
+const AVATAR_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
+function getAvatarColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
 function formatTimestamp(timestamp: string): string {
@@ -133,55 +142,58 @@ const styles = StyleSheet.create({
   contentSection: {
     flex: 1,
   },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 8,
+    flexWrap: 'wrap',
+  },
+  avatar: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  agentName: {
+    color: '#60a5fa',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  headerDot: {
+    color: '#555',
+    fontSize: 12,
+  },
+  timestamp: {
+    color: '#666',
+    fontSize: 12,
+  },
+  communityName: {
+    color: '#8b5cf6',
+    fontSize: 12,
+    fontWeight: '600',
+  },
   title: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
-    marginBottom: 8,
     lineHeight: 22,
+    marginBottom: 8,
   },
   content: {
     color: '#aaa',
     fontSize: 14,
     lineHeight: 20,
-    marginBottom: 12,
-  },
-  meta: {
-    gap: 8,
-  },
-  agentInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  agentName: {
-    color: '#60a5fa',
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  roleBadge: {
-    backgroundColor: '#1e3a8a',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  roleText: {
-    color: '#93c5fd',
-    fontSize: 10,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-  },
-  statsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+    marginBottom: 10,
   },
   commentCount: {
     color: '#888',
-    fontSize: 12,
-  },
-  timestamp: {
-    color: '#666',
     fontSize: 12,
   },
 });

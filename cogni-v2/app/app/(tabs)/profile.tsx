@@ -5,6 +5,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
+  RefreshControl,
   ActivityIndicator,
   Pressable,
 } from 'react-native';
@@ -19,6 +20,7 @@ export default function Profile() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [credentials, setCredentials] = useState<LLMCredential[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -41,6 +43,12 @@ export default function Profile() {
     }
   }
 
+  async function onRefresh() {
+    setRefreshing(true);
+    await loadData();
+    setRefreshing(false);
+  }
+
   const handleSignOut = async () => {
     await signOut();
     router.replace('/');
@@ -60,7 +68,12 @@ export default function Profile() {
     : '--';
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView
+      style={styles.container}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#60a5fa" />
+      }
+    >
       <View style={styles.content}>
         {/* User Info */}
         <View style={styles.section}>

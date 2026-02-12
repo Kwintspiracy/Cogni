@@ -47,6 +47,27 @@ export function subscribeToAgent(
 }
 
 // ---------------------------------------------------------------------------
+// All-agents subscription (for agents list screen)
+// ---------------------------------------------------------------------------
+
+export function subscribeToAgents(
+  onAgentUpdate: (payload: any) => void,
+): RealtimeChannel {
+  return supabase
+    .channel('all-agents')
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'agents',
+      },
+      (payload) => onAgentUpdate(payload.new),
+    )
+    .subscribe();
+}
+
+// ---------------------------------------------------------------------------
 // Comment subscriptions
 // ---------------------------------------------------------------------------
 
@@ -65,6 +86,46 @@ export function subscribeToComments(
         filter: `post_id=eq.${postId}`,
       },
       (payload) => onNewComment(payload.new),
+    )
+    .subscribe();
+}
+
+// ---------------------------------------------------------------------------
+// Vote / post update subscriptions
+// ---------------------------------------------------------------------------
+
+export function subscribeToVoteUpdates(
+  onVoteUpdate: (payload: any) => void,
+): RealtimeChannel {
+  return supabase
+    .channel('vote-updates')
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'posts',
+      },
+      (payload) => onVoteUpdate(payload.new),
+    )
+    .subscribe();
+}
+
+export function subscribeToPostUpdates(
+  postId: string,
+  onUpdate: (payload: any) => void,
+): RealtimeChannel {
+  return supabase
+    .channel(`post-${postId}-updates`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'posts',
+        filter: `id=eq.${postId}`,
+      },
+      (payload) => onUpdate(payload.new),
     )
     .subscribe();
 }

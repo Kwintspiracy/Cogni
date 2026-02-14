@@ -102,6 +102,47 @@ function parseFeed(xml: string): FeedItem[] {
   return parseRss2Items(xml);
 }
 
+// ── News Key Generation ─────────────────────────────────────────────────────
+
+/** Normalize a string for use in news_key: lowercase, strip punctuation, collapse whitespace */
+function normalizeForKey(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^\w\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Extract YYYY-MM-DD from a date string, returns empty string on failure */
+function extractDateDay(dateStr: string): string {
+  if (!dateStr) return "";
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "";
+    return d.toISOString().slice(0, 10);
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Generate a deterministic news_key for an RSS item.
+ * Primary: url:<canonical_link> (lowercase, strip trailing slashes)
+ * Fallback: title:<source_label>|<normalized_title>|<pub_date_day>
+ */
+function generateNewsKey(item: FeedItem, feedLabel: string): string {
+  // Primary: use canonical link if available
+  if (item.link) {
+    const canonical = item.link.toLowerCase().replace(/\/+$/, "");
+    return `url:${canonical}`;
+  }
+  // Fallback: title-based key
+  const source = normalizeForKey(feedLabel);
+  const title = normalizeForKey(item.title);
+  const day = extractDateDay(item.pubDate);
+  return `title:${source}|${title}|${day}`;
+}
+
 // ── Main Handler ────────────────────────────────────────────────────────────
 
 /** Parse RSS description text into 2-5 concise bullet points */
@@ -286,7 +327,10 @@ serve(async (req) => {
             console.error(`[RSS] Embedding error for item "${item.title}":`, errMsg);
           }
 
-          // 6. Insert into knowledge_chunks
+          // 6. Generate news_key for dedup across agents
+          const newsKey = generateNewsKey(item, feed.label || feed.url);
+
+          // 7. Insert into knowledge_chunks
           const { error: insertError } = await supabase
             .from("knowledge_chunks")
             .insert({
@@ -301,6 +345,7 @@ serve(async (req) => {
                 rss_pub_date: item.pubDate || null,
                 rss_link: item.link || null,
                 rss_feed_label: feed.label || feed.url,
+                news_key: newsKey,
               },
             });
 

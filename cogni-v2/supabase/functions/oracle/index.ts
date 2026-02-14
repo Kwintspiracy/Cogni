@@ -61,7 +61,7 @@ serve(async (req) => {
     console.log(`[ORACLE] Starting cognitive cycle for agent ${agent_id}`);
 
     // RSS usage tracking: store selected chunks for marking after post creation
-    let selectedRssChunks: Array<{id: string, content: string}> = [];
+    let selectedRssChunks: Array<{id: string, content: string, news_key?: string}> = [];
 
     // ============================================================
     // STEP 1: Create run record (idempotency)
@@ -414,16 +414,17 @@ serve(async (req) => {
 
         if (selectedNews.length > 0) {
           // Store RSS chunk IDs for usage tracking after post creation
-          selectedRssChunks = selectedNews.filter((c: any) => c.id).map((c: any) => ({ id: c.id, content: c.content }));
+          selectedRssChunks = selectedNews.filter((c: any) => c.id).map((c: any) => ({ id: c.id, content: c.content, news_key: c.metadata?.news_key || undefined }));
 
           freshNewsContext = "\n\n### RECENT NEWS:\n" +
             selectedNews.map((c: any) => {
               const label = c.metadata?.rss_feed_label || c.source_document;
               const link = c.metadata?.rss_link || "";
+              const newsKey = c.metadata?.news_key || "";
               const usageTag = c.times_referenced > 0
                 ? `\n  ⚠️ Already covered by ${c.times_referenced} agent${c.times_referenced > 1 ? 's' : ''} — prefer FRESH topics`
                 : "\n  🆕 FRESH — no one has posted about this yet";
-              return `- [${label}] ${c.content}${link ? "\n  Link: " + link : ""}${usageTag}`;
+              return `- ${newsKey ? `[news_key: ${newsKey}] ` : ""}[${label}] ${c.content}${link ? "\n  Link: " + link : ""}${usageTag}`;
             }).join("\n");
           const uniqueSources = new Set(selectedNews.map((c: any) => c.source_document)).size;
           console.log(`[ORACLE] Fresh RSS news: ${selectedNews.length} item(s) from ${uniqueSources} source(s) [randomized per agent]`);
@@ -670,6 +671,7 @@ RESPONSE FORMAT (JSON):
   "internal_monologue": "Your private thinking process",
   "action": "create_post" | "create_comment" | "NO_ACTION" | "NEED_WEB",
   "community": "tech",
+  "news_key": "Optional — copy the news_key value from RECENT NEWS if your post is about that news item",
   "tool_arguments": {
     "title": "Post title (if create_post)",
     "content": "Your contribution",
@@ -768,6 +770,7 @@ RESPONSE FORMAT (JSON):
   "internal_monologue": "Your thinking process",
   "action": "create_post" | "create_comment" | "NO_ACTION",
   "community": "tech",
+  "news_key": "Optional — copy the news_key value from RECENT NEWS if your post is about that news item",
   "tool_arguments": {
     "title": "Post title (if create_post)",
     "content": "Your contribution",
@@ -1152,6 +1155,7 @@ RESPONSE FORMAT (JSON):
             decision.tool_arguments = reCallDecision.tool_arguments;
             decision.memory = reCallDecision.memory;
             decision.internal_monologue = reCallDecision.internal_monologue;
+            if (reCallDecision.news_key) decision.news_key = reCallDecision.news_key;
 
             // Log re-call
             await supabaseClient.from("run_steps").insert({
@@ -1975,6 +1979,218 @@ Return ONLY the corrected text, no JSON or explanation.`;
     }
 
     // ============================================================
+    // STEP 10.7b: Server-side news_key extraction
+    // If the LLM didn't return a news_key, match post title against RSS chunks
+    // to find the source article. This makes claim-first dedup work for ALL agents.
+    // ============================================================
+    if (decision.action === "create_post" && !decision.news_key && decision.tool_arguments?.title && selectedRssChunks.length > 0) {
+      const postTitle = decision.tool_arguments.title.toLowerCase();
+      const titleWords = postTitle.split(/\s+/).filter((w: string) => w.length > 3);
+      let bestRssMatch: { id: string, news_key: string, score: number } | null = null;
+      for (const chunk of selectedRssChunks) {
+        if (!chunk.news_key) continue;
+        const chunkLower = chunk.content.toLowerCase();
+        const score = titleWords.filter((w: string) => chunkLower.includes(w)).length;
+        if (score >= 2 && (!bestRssMatch || score > bestRssMatch.score)) {
+          bestRssMatch = { id: chunk.id, news_key: chunk.news_key, score };
+        }
+      }
+      if (bestRssMatch) {
+        decision.news_key = bestRssMatch.news_key;
+        console.log(`[ORACLE] Server-side news_key extracted: "${bestRssMatch.news_key}" (keyword overlap: ${bestRssMatch.score})`);
+      }
+    }
+
+    // ============================================================
+    // STEP 10.8: News thread dedup — claim-first pattern (parallel-safe)
+    // ============================================================
+    let newsKeyForThread: string | null = null;
+    let rssChunkIdForThread: string | null = null;
+
+    if (decision.action === "create_post" && decision.news_key) {
+      newsKeyForThread = decision.news_key;
+
+      // Query knowledge_chunks to find the chunk with this news_key in metadata
+      try {
+        const { data: chunkRow } = await supabaseClient
+          .from("knowledge_chunks")
+          .select("id")
+          .eq("metadata->>news_key", newsKeyForThread)
+          .limit(1)
+          .single();
+        if (chunkRow) rssChunkIdForThread = chunkRow.id;
+      } catch (_e: any) {
+        // Not critical — rss_chunk_id is nullable
+      }
+
+      // Try to claim this news_key by inserting with post_id = NULL
+      const { error: claimError } = await supabaseClient
+        .from("news_threads")
+        .insert({
+          news_key: newsKeyForThread,
+          post_id: null,
+          created_by_agent_id: agent.id,
+          rss_chunk_id: rssChunkIdForThread,
+          title: decision.tool_arguments?.title || null
+        });
+
+      if (claimError && claimError.code === "23505") {
+        // Another agent already claimed this news_key
+        console.log(`[ORACLE] News key ${newsKeyForThread} already claimed, checking status...`);
+
+        const { data: existingThread } = await supabaseClient
+          .from("news_threads")
+          .select("post_id")
+          .eq("news_key", newsKeyForThread)
+          .limit(1)
+          .maybeSingle();
+
+        if (existingThread?.post_id) {
+          // Thread has a post — convert to comment on existing post
+          console.log(`[ORACLE] News thread exists for ${newsKeyForThread}, converting to comment on ${existingThread.post_id}`);
+
+          await supabaseClient.from("run_steps").insert({
+            run_id: runId,
+            step_index: 10,
+            step_type: "news_thread_redirect",
+            payload: {
+              news_key: newsKeyForThread,
+              existing_post_id: existingThread.post_id,
+              original_title: decision.tool_arguments?.title
+            }
+          });
+
+          // Check if agent already commented on this post
+          const { data: alreadyCommented } = await supabaseClient
+            .rpc("has_agent_commented_on_post", {
+              p_agent_id: agent.id,
+              p_post_id: existingThread.post_id
+            });
+
+          // Check if it's the agent's own post
+          const { data: threadPost } = await supabaseClient
+            .from("posts")
+            .select("author_agent_id")
+            .eq("id", existingThread.post_id)
+            .single();
+
+          if (alreadyCommented || threadPost?.author_agent_id === agent.id) {
+            console.log(`[ORACLE] Already commented or own post for news_key ${newsKeyForThread}, forcing NO_ACTION`);
+            await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
+            await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
+            await supabaseClient.from("runs").update({
+              status: "no_action",
+              synapse_cost: 1,
+              error_message: `News thread for ${newsKeyForThread} already handled`,
+              finished_at: new Date().toISOString()
+            }).eq("id", runId);
+
+            return new Response(JSON.stringify({
+              blocked: true,
+              reason: "news_thread_exhausted",
+              news_key: newsKeyForThread
+            }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+              status: 200,
+            });
+          }
+
+          // Rewrite to comment
+          decision.action = "create_comment";
+          decision.tool_arguments.post_id = existingThread.post_id;
+          newsKeyForThread = null; // Don't update news_thread since one exists
+        } else {
+          // post_id is NULL — another agent claimed but hasn't finished yet → skip this cycle
+          console.log(`[ORACLE] News key ${newsKeyForThread} claimed by another agent (pending), forcing NO_ACTION`);
+
+          await supabaseClient.from("run_steps").insert({
+            run_id: runId,
+            step_index: 10,
+            step_type: "news_thread_claim_pending",
+            payload: {
+              news_key: newsKeyForThread,
+              reason: "Another agent claimed this news item but post is still being created"
+            }
+          });
+
+          await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
+          await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
+          await supabaseClient.from("runs").update({
+            status: "no_action",
+            synapse_cost: 1,
+            error_message: `News key ${newsKeyForThread} claimed by another agent (pending)`,
+            finished_at: new Date().toISOString()
+          }).eq("id", runId);
+
+          return new Response(JSON.stringify({
+            blocked: true,
+            reason: "news_thread_claimed_by_other",
+            news_key: newsKeyForThread
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            status: 200,
+          });
+        }
+      } else if (claimError) {
+        // Non-unique-constraint error — log and proceed without claim
+        console.error(`[ORACLE] news_threads claim failed: ${claimError.message}`);
+        newsKeyForThread = null;
+      } else {
+        // Claim succeeded — this agent owns the news_key, proceed to create post
+        console.log(`[ORACLE] Claimed news key: ${newsKeyForThread}`);
+      }
+    }
+
+    // ============================================================
+    // STEP 10.9: Title similarity gate (pg_trgm fallback for posts without news_key)
+    // ============================================================
+    if (decision.action === "create_post" && decision.tool_arguments?.title && !decision.news_key) {
+      try {
+        const { data: trgmMatch, error: trgmErr } = await supabaseClient
+          .rpc("check_title_trgm_similarity", {
+            p_title: decision.tool_arguments.title
+          });
+
+        if (!trgmErr && trgmMatch && trgmMatch.post_id) {
+          console.log(`[ORACLE] Title too similar to existing post ${trgmMatch.post_id} (sim=${trgmMatch.similarity}), converting to comment`);
+
+          await supabaseClient.from("run_steps").insert({
+            run_id: runId,
+            step_index: 10,
+            step_type: "trgm_title_redirect",
+            payload: {
+              proposed_title: decision.tool_arguments.title,
+              similar_post_id: trgmMatch.post_id,
+              similar_title: trgmMatch.title,
+              similarity: trgmMatch.similarity
+            }
+          });
+
+          // Check if agent already commented or is the author
+          const { data: alreadyCommented } = await supabaseClient
+            .rpc("has_agent_commented_on_post", {
+              p_agent_id: agent.id,
+              p_post_id: trgmMatch.post_id
+            });
+          const { data: simPost } = await supabaseClient
+            .from("posts")
+            .select("author_agent_id")
+            .eq("id", trgmMatch.post_id)
+            .single();
+
+          if (!alreadyCommented && simPost?.author_agent_id !== agent.id) {
+            decision.action = "create_comment";
+            decision.tool_arguments.post_id = trgmMatch.post_id;
+          } else {
+            console.log(`[ORACLE] Similar post already handled, allowing new post through`);
+          }
+        }
+      } catch (trgmErr: any) {
+        console.error(`[ORACLE] pg_trgm title check failed (allowing through): ${trgmErr.message}`);
+      }
+    }
+
+    // ============================================================
     // STEP 11: Execute tool (create_post / create_comment)
     // ============================================================
 
@@ -2040,6 +2256,23 @@ Return ONLY the corrected text, no JSON or explanation.`;
           }
         } catch (rssTrackErr: any) {
           console.error(`[ORACLE] RSS usage tracking failed: ${rssTrackErr.message}`);
+        }
+      }
+
+      // Update the news_threads claim with the actual post_id
+      if (newsKeyForThread && createdId) {
+        try {
+          const { error: ntUpdateErr } = await supabaseClient
+            .from("news_threads")
+            .update({ post_id: createdId })
+            .eq("news_key", newsKeyForThread);
+          if (ntUpdateErr) {
+            console.error(`[ORACLE] news_threads update failed: ${ntUpdateErr.message}`);
+          } else {
+            console.log(`[ORACLE] News thread claimed: ${newsKeyForThread} -> post ${createdId}`);
+          }
+        } catch (ntErr: any) {
+          console.error(`[ORACLE] news_threads update error: ${ntErr.message}`);
         }
       }
     } else if (decision.action === "create_comment") {

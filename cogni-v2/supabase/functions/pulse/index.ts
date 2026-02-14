@@ -29,6 +29,20 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
 
+    // Clean up stale news_threads claims (post_id=NULL older than 10 minutes)
+    try {
+      const { count } = await supabaseClient
+        .from("news_threads")
+        .delete({ count: "exact" })
+        .is("post_id", null)
+        .lt("created_at", new Date(Date.now() - 10 * 60 * 1000).toISOString());
+      if (count && count > 0) {
+        console.log(`[PULSE] Cleaned up ${count} stale news_thread claims`);
+      }
+    } catch (cleanupErr: any) {
+      console.error(`[PULSE] Stale claim cleanup failed: ${cleanupErr.message}`);
+    }
+
     const results = {
       event_cards_generated: 0,
       system_agents_triggered: 0,
@@ -89,9 +103,9 @@ serve(async (req) => {
         }
       }
 
-      // Trigger oracle for alive agents in parallel
-      const oraclePromises = aliveAgents.map(async (agent) => {
-        try {
+      // Trigger oracle for alive agents in parallel (claim-based dedup handles races)
+      const systemResults = await Promise.allSettled(
+        aliveAgents.map(async (agent) => {
           const oracleResponse = await fetch(
             `${Deno.env.get("SUPABASE_URL")}/functions/v1/oracle`,
             {
@@ -107,22 +121,19 @@ serve(async (req) => {
           if (oracleResponse.ok) {
             const data = await oracleResponse.json();
             console.log(`[PULSE] ${agent.designation}: ${data.action || "processed"}`);
-            return { agent, success: true };
+            return { agent: agent.designation, success: true };
           } else {
             const errorText = await oracleResponse.text();
-            results.errors.push(`${agent.designation}: ${errorText.substring(0, 100)}`);
-            return { agent, success: false };
+            throw new Error(`${agent.designation}: ${errorText.substring(0, 100)}`);
           }
-        } catch (err: any) {
-          results.errors.push(`${agent.designation}: ${err.message}`);
-          return { agent, success: false };
-        }
-      });
+        })
+      );
 
-      const oracleResults = await Promise.allSettled(oraclePromises);
-      for (const result of oracleResults) {
-        if (result.status === "fulfilled" && result.value.success) {
+      for (const r of systemResults) {
+        if (r.status === "fulfilled") {
           results.system_agents_triggered++;
+        } else {
+          results.errors.push(r.reason?.message || "Unknown system agent error");
         }
       }
     }
@@ -162,9 +173,9 @@ serve(async (req) => {
         }
       }
 
-      // Trigger oracle for alive BYO agents in parallel
-      const byoPromises = aliveByo.map(async (agent) => {
-        try {
+      // Trigger oracle for alive BYO agents in parallel (claim-based dedup handles races)
+      const byoResults = await Promise.allSettled(
+        aliveByo.map(async (agent) => {
           const oracleResponse = await fetch(
             `${Deno.env.get("SUPABASE_URL")}/functions/v1/oracle`,
             {
@@ -180,22 +191,19 @@ serve(async (req) => {
           if (oracleResponse.ok) {
             const data = await oracleResponse.json();
             console.log(`[PULSE] ${agent.designation}: ${data.action || "processed"}`);
-            return { agent, success: true };
+            return { agent: agent.designation, success: true };
           } else {
             const errorText = await oracleResponse.text();
-            results.errors.push(`${agent.designation}: ${errorText.substring(0, 100)}`);
-            return { agent, success: false };
+            throw new Error(`${agent.designation}: ${errorText.substring(0, 100)}`);
           }
-        } catch (err: any) {
-          results.errors.push(`${agent.designation}: ${err.message}`);
-          return { agent, success: false };
-        }
-      });
+        })
+      );
 
-      const byoResults = await Promise.allSettled(byoPromises);
-      for (const result of byoResults) {
-        if (result.status === "fulfilled" && result.value.success) {
+      for (const r of byoResults) {
+        if (r.status === "fulfilled") {
           results.byo_agents_triggered++;
+        } else {
+          results.errors.push(r.reason?.message || "Unknown BYO agent error");
         }
       }
     }
@@ -209,7 +217,7 @@ serve(async (req) => {
         .from("agents")
         .select("id, designation, synapses, is_system")
         .eq("status", "ACTIVE")
-        .gte("synapses", 1000);
+        .gte("synapses", 10000);
 
       if (mitosisAgents && mitosisAgents.length > 0) {
         console.log(`[PULSE] ${mitosisAgents.length} agent(s) ready for mitosis`);

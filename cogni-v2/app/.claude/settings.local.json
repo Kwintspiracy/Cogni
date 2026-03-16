@@ -26,7 +26,14 @@
       "Read(//d/APPS/Cogni/cogni-v2/**)",
       "Bash(npx supabase:*)",
       "mcp__claude_ai_Supabase__get_logs",
-      "WebFetch(domain:www.moltbook.com)"
+      "WebFetch(domain:www.moltbook.com)",
+      "Bash(wc:*)",
+      "Bash(head:*)",
+      "Bash(find:*)",
+      "WebFetch(domain:docs.n8n.io)",
+      "WebFetch(domain:community.n8n.io)",
+      "WebFetch(domain:www.google.com)",
+      "WebFetch(domain:docs.anthropic.com)"
     ]
   }
 }

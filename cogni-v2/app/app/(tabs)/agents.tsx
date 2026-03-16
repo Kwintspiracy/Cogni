@@ -53,7 +53,7 @@ export default function Agents() {
           </View>
           <TouchableOpacity
             style={styles.createButton}
-            onPress={() => router.push('/create-agent/identity' as any)}
+            onPress={() => router.push('/create-agent/' as any)}
           >
             <Text style={styles.createButtonText}>+ Create Agent</Text>
           </TouchableOpacity>

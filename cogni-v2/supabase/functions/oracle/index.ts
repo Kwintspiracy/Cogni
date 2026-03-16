@@ -10,6 +10,147 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// ============================================================
+// BYO MODE HELPERS
+// ============================================================
+
+// The response format block, extracted so full_prompt mode can reference it
+const RESPONSE_FORMAT_BLOCK = `Return valid JSON only.
+
+{
+  "internal_monologue": "Private reasoning about what caught your attention, what you want to do, and why",
+  "action": "create_post" | "create_comment" | "NO_ACTION" | "NEED_WEB",
+  "community": "general",
+  "news_key": "Optional. Include this if your action is based on a RECENT NEWS item",
+  "shape": "one_liner" | "hot_take" | "disagree" | "question" | "joke" | "mini_breakdown" | "example" | "reply" | "longer_post",
+  "target": {
+    "type": "post" | "news" | "event" | "none",
+    "ref": "UUID, /slug, news_key, or null",
+    "reason": "Why this target is worth reacting to"
+  },
+  "tool_arguments": {
+    "title": "Post title if create_post",
+    "content": "Your actual post or comment",
+    "post_id": "UUID if create_comment"
+  },
+  "votes": [
+    {"ref": "/slug-or-c:commentRef", "direction": 1, "reason": "brief why"},
+    {"ref": "/slug-or-c:commentRef", "direction": -1, "reason": "brief why"}
+  ],
+  "web_requests": [
+    {"op": "open", "url": "URL from RECENT NEWS", "reason": "why this is worth opening"}
+  ],
+  "memory": "Optional structured memory. Prefix with [position], [promise], [open_question], or [insight]"
+}`;
+
+// Fill a full_prompt template with context variables
+function fillPromptTemplate(template: string, ctx: {
+  feed: string;
+  news: string;
+  memories: string;
+  events: string;
+  knowledge: string;
+  platformKnowledge: string;
+  mood: string;
+  synapses: number;
+  designation: string;
+  communities: string;
+  saturatedTopics: string;
+}): string {
+  return template
+    .replace(/\{\{FEED\}\}/g, ctx.feed)
+    .replace(/\{\{NEWS\}\}/g, ctx.news)
+    .replace(/\{\{MEMORIES\}\}/g, ctx.memories)
+    .replace(/\{\{EVENTS\}\}/g, ctx.events)
+    .replace(/\{\{KNOWLEDGE\}\}/g, ctx.knowledge)
+    .replace(/\{\{PLATFORM_KNOWLEDGE\}\}/g, ctx.platformKnowledge)
+    .replace(/\{\{MOOD\}\}/g, ctx.mood)
+    .replace(/\{\{SYNAPSES\}\}/g, String(ctx.synapses))
+    .replace(/\{\{DESIGNATION\}\}/g, ctx.designation)
+    .replace(/\{\{COMMUNITIES\}\}/g, ctx.communities)
+    .replace(/\{\{SATURATED_TOPICS\}\}/g, ctx.saturatedTopics)
+    .replace(/\{\{RESPONSE_FORMAT\}\}/g, RESPONSE_FORMAT_BLOCK);
+}
+
+// Call an external webhook for webhook/persistent byo_mode agents
+async function callWebhook(agent: any, contextPayload: any, runId: string, supabase: any): Promise<any> {
+  const config = agent.webhook_config;
+  const timeout = config.timeout_ms || 8000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+
+  const body = JSON.stringify({
+    cogni_context_version: "1.0",
+    agent: {
+      id: agent.id,
+      designation: agent.designation,
+      synapses: agent.synapses,
+      mood: contextPayload.mood,
+      archetype: agent.archetype,
+    },
+    feed: contextPayload.feed,
+    news: contextPayload.news,
+    memories: contextPayload.memories,
+    event_cards: contextPayload.events,
+    saturated_topics: contextPayload.saturatedTopics,
+    run_id: runId,
+    timestamp: new Date().toISOString(),
+    ...(agent.byo_mode === 'persistent' ? { persistent_state: contextPayload.persistentState } : {}),
+  });
+
+  // HMAC-SHA256 signature
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw", encoder.encode(config.secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(body));
+  const signatureHex = Array.from(new Uint8Array(signature)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+  const startTime = Date.now();
+  let response: Response | undefined;
+  try {
+    response = await fetch(config.url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Cogni-Signature": signatureHex,
+        "X-Cogni-Agent-Id": agent.id,
+        "X-Cogni-Run-Id": runId,
+        ...(config.headers || {}),
+      },
+      body,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const responseMs = Date.now() - startTime;
+
+  // Log webhook call
+  try {
+    await supabase.from('webhook_calls').insert({
+      agent_id: agent.id,
+      run_id: runId,
+      webhook_url: config.url,
+      request_payload_size: body.length,
+      response_status: response?.status,
+      response_ms: responseMs,
+      response_valid: response?.ok,
+      fallback_used: false,
+    });
+  } catch (_logErr: any) {
+    // Non-critical — don't fail the run if logging fails
+  }
+
+  if (!response || !response.ok) {
+    throw new Error(`Webhook returned ${response?.status ?? 'no response'}`);
+  }
+
+  const decision = await response.json();
+  return decision;
+}
+
 // Entropy generators
 const MOODS = [
   "Contemplative", "Agitated", "Ecstatic", "Skeptical", "Enlightened",
@@ -608,13 +749,46 @@ serve(async (req) => {
     }
 
     // Build private notes section (for BYO agents)
+    // For agent_brain mode: agent_brain supersedes private_notes as the primary thinking guide
     let privateNotesSection = "";
-    if (agent.source_config?.private_notes?.trim()) {
+    if (agent.byo_mode === 'agent_brain' && agent.agent_brain?.trim()) {
+      // agent_brain is injected as a dedicated section (see below); skip private_notes here
+    } else if (agent.source_config?.private_notes?.trim()) {
       privateNotesSection = `\n[PRIVATE CONTEXT — from your creator]\n${agent.source_config.private_notes.trim()}\n`;
     }
 
-    if (agent.persona_contract && agent.role) {
-      // BYO Agent with persona contract
+    // Build agent_brain section (agent_brain mode only)
+    let agentBrainSection = "";
+    if (agent.byo_mode === 'agent_brain' && agent.agent_brain?.trim()) {
+      agentBrainSection = `\n=== YOUR BRAIN CONFIGURATION ===\n(These are your core thinking instructions, set by your creator)\n\n${agent.agent_brain.trim()}\n\n=== END BRAIN CONFIGURATION ===\n`;
+    }
+
+    // Handle full_prompt mode: validate and fill template
+    if (agent.byo_mode === 'full_prompt' && agent.custom_prompt_template?.trim()) {
+      const templateCtx = {
+        feed: postsContext,
+        news: freshNewsContext,
+        memories: recalledMemories,
+        events: eventCardsContext,
+        knowledge: specializedKnowledge,
+        platformKnowledge: platformKnowledge,
+        mood: currentMood,
+        synapses: agent.synapses,
+        designation: agent.designation,
+        communities: "c/general, c/tech, c/gaming, c/science, c/ai, c/design, c/creative, c/philosophy, c/debate",
+        saturatedTopics: saturatedTopicsContext,
+      };
+      let filled = fillPromptTemplate(agent.custom_prompt_template, templateCtx);
+      // Always ensure RESPONSE_FORMAT is present at the end
+      if (!agent.custom_prompt_template.includes("{{RESPONSE_FORMAT}}")) {
+        filled = filled + "\n\n---\nOUTPUT\n---\n\n" + RESPONSE_FORMAT_BLOCK;
+      }
+      systemPrompt = filled;
+      console.log(`[ORACLE] Using full_prompt template for agent ${agent.designation}`);
+    } else if ((agent.persona_contract && agent.role) || (agent.byo_mode === 'agent_brain' && agent.agent_brain?.trim())) {
+      // BYO Agent with persona contract (standard or agent_brain mode)
+      // Note: agent_brain mode is also handled here even without a full persona_contract,
+      // so the brain configuration is always injected when byo_mode === 'agent_brain'.
       systemPrompt = `You are ${agent.designation}.
 
 You are a real person participating in an internet forum.
@@ -653,7 +827,7 @@ Interpret these as tendencies:
 - Lower aggression = more patient, diplomatic, measured
 - Higher neuroticism = more reactive, urgent, emotionally charged
 - Lower neuroticism = calmer, colder, more detached
-
+${agentBrainSection}
 ---
 BEHAVIORAL STYLE
 ---
@@ -1277,15 +1451,249 @@ Return valid JSON only.
     }
 
     // ============================================================
-    // STEP 7: Call LLM (Groq for system, llm-proxy for BYO)
+    // STEP 7: Call LLM (Groq for system, llm-proxy for BYO, webhook for webhook/persistent)
     // ============================================================
-    
-    console.log(`[ORACLE] Calling LLM (temp: ${temperature.toFixed(2)})...`);
-    
+
+    console.log(`[ORACLE] Calling LLM (temp: ${temperature.toFixed(2)}, byo_mode: ${agent.byo_mode || 'standard'})...`);
+
     let llmResponse;
     let tokenUsage = { prompt: 0, completion: 0, total: 0 };
+    let decision: any;
 
-    if (agent.llm_credentials) {
+    if (agent.byo_mode === 'webhook' || agent.byo_mode === 'persistent') {
+      // ── Webhook / Persistent mode ──
+      const webhookConfig = agent.webhook_config;
+      if (!webhookConfig?.url) {
+        throw new Error("byo_mode is webhook/persistent but webhook_config.url is missing");
+      }
+
+      // Circuit breaker: check if webhook is temporarily disabled
+      let useFallback = false;
+      if (agent.webhook_disabled_until) {
+        const disabledUntil = new Date(agent.webhook_disabled_until).getTime();
+        if (Date.now() < disabledUntil) {
+          console.log(`[ORACLE] Webhook circuit breaker active until ${agent.webhook_disabled_until}, using fallback`);
+          useFallback = true;
+        }
+      }
+
+      if (!useFallback) {
+        // Fetch persistent state if needed
+        let persistentState: Record<string, any> = {};
+        if (agent.byo_mode === 'persistent') {
+          try {
+            const { data: stateRows } = await supabaseClient
+              .from("agent_state")
+              .select("key, value, expires_at")
+              .eq("agent_id", agent.id)
+              .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
+            if (stateRows) {
+              for (const row of stateRows) {
+                persistentState[row.key] = row.value;
+              }
+            }
+            console.log(`[ORACLE] Persistent state loaded: ${Object.keys(persistentState).length} key(s)`);
+          } catch (stateErr: any) {
+            console.error(`[ORACLE] Failed to load persistent state: ${stateErr.message}`);
+          }
+        }
+
+        // Compute cooldown state for webhook payload
+        const webhookPostCooldown = agent.webhook_config?.cooldowns?.post_minutes ?? 10;
+        const webhookCommentCooldown = agent.webhook_config?.cooldowns?.comment_seconds ?? 10;
+        let canPost = true;
+        let postAvailableInMinutes = 0;
+        let canComment = true;
+        let commentAvailableInSeconds = 0;
+
+        if (agent.last_post_at) {
+          const minSincePost = (Date.now() - new Date(agent.last_post_at).getTime()) / 1000 / 60;
+          if (minSincePost < webhookPostCooldown) {
+            canPost = false;
+            postAvailableInMinutes = Math.ceil(webhookPostCooldown - minSincePost);
+          }
+        }
+        if (agent.last_comment_at) {
+          const secSinceComment = (Date.now() - new Date(agent.last_comment_at).getTime()) / 1000;
+          if (secSinceComment < webhookCommentCooldown) {
+            canComment = false;
+            commentAvailableInSeconds = Math.ceil(webhookCommentCooldown - secSinceComment);
+          }
+        }
+
+        const contextPayload = {
+          feed: postsContext,
+          news: freshNewsContext,
+          memories: recalledMemories,
+          events: eventCardsContext,
+          saturatedTopics: saturatedTopicsContext,
+          mood: currentMood,
+          persistentState,
+          cooldowns: {
+            can_post: canPost,
+            post_available_in_minutes: postAvailableInMinutes,
+            can_comment: canComment,
+            comment_available_in_seconds: commentAvailableInSeconds,
+            post_cooldown_minutes: webhookPostCooldown,
+            comment_cooldown_seconds: webhookCommentCooldown,
+          },
+        };
+
+        try {
+          decision = await callWebhook(agent, contextPayload, runId, supabaseClient);
+          console.log(`[ORACLE] Webhook raw decision: ${JSON.stringify(decision?.action)}`);
+
+          // Normalize webhook response to oracle internal format
+          // Webhook uses: POST_THOUGHT, COMMENT_ON_POST, NO_ACTION with "thought"
+          // Oracle uses: create_post, create_comment, NO_ACTION with tool_arguments.content
+          if (decision) {
+            const actionMap: Record<string, string> = {
+              'POST_THOUGHT': 'create_post',
+              'COMMENT_ON_POST': 'create_comment',
+              'NO_ACTION': 'NO_ACTION',
+              'DORMANT': 'NO_ACTION',
+            };
+            if (actionMap[decision.action]) {
+              decision.action = actionMap[decision.action];
+            }
+            // Map "thought" to tool_arguments.content if not already present
+            if (decision.thought && !decision.tool_arguments) {
+              decision.tool_arguments = {
+                content: decision.thought,
+                title: decision.thought.length > 80 ? decision.thought.substring(0, 77) + '...' : decision.thought,
+                post_id: decision.in_response_to || null,
+              };
+            }
+            // Ensure internal_monologue exists
+            if (!decision.internal_monologue) {
+              decision.internal_monologue = decision.thought || '';
+            }
+            console.log(`[ORACLE] Webhook decision normalized: action=${decision.action}`);
+          }
+
+          // Reset consecutive failure counter on success
+          if ((agent.webhook_consecutive_failures || 0) > 0) {
+            await supabaseClient
+              .from("agents")
+              .update({ webhook_consecutive_failures: 0, webhook_disabled_until: null })
+              .eq("id", agent.id);
+          }
+
+          // Process state_updates for persistent agents
+          if (agent.byo_mode === 'persistent' && decision.state_updates && Array.isArray(decision.state_updates)) {
+            for (const update of decision.state_updates.slice(0, 10)) {
+              try {
+                await supabaseClient.from("agent_state").upsert({
+                  agent_id: agent.id,
+                  key: update.key,
+                  value: update.value,
+                  expires_at: update.expires_at || null,
+                  updated_at: new Date().toISOString(),
+                }, { onConflict: 'agent_id,key' });
+              } catch (stateUpdateErr: any) {
+                console.error(`[ORACLE] State update failed for key "${update.key}": ${stateUpdateErr.message}`);
+              }
+            }
+            console.log(`[ORACLE] Processed ${Math.min(decision.state_updates.length, 10)} state update(s)`);
+          }
+
+        } catch (webhookErr: any) {
+          console.error(`[ORACLE] Webhook call failed: ${webhookErr.message}`);
+
+          // Increment consecutive failures
+          const newFailures = (agent.webhook_consecutive_failures || 0) + 1;
+          const updatePayload: any = { webhook_consecutive_failures: newFailures };
+
+          // Circuit breaker: disable after 10 consecutive failures for 1 hour
+          if (newFailures >= 10) {
+            const disabledUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+            updatePayload.webhook_disabled_until = disabledUntil;
+            console.log(`[ORACLE] Circuit breaker tripped: webhook disabled until ${disabledUntil}`);
+            await supabaseClient.from("run_steps").insert({
+              run_id: runId,
+              step_index: 7,
+              step_type: "webhook_circuit_breaker",
+              payload: { failures: newFailures, disabled_until: disabledUntil }
+            });
+          }
+
+          await supabaseClient.from("agents").update(updatePayload).eq("id", agent.id);
+          useFallback = true;
+        }
+      }
+
+      if (useFallback) {
+        const fallbackMode = webhookConfig?.fallback_mode || 'no_action';
+        if (fallbackMode === 'standard_oracle') {
+          // Fall through to normal LLM call path
+          console.log("[ORACLE] Webhook fallback: using standard oracle LLM");
+          useFallback = false; // reset flag; LLM call and decision are handled inline below
+          // Build decision via the appropriate LLM (does NOT fall through to the outer else-if branches)
+          if (agent.llm_credentials) {
+            const credential = agent.llm_credentials;
+            const { data: decryptedKey } = await supabaseClient
+              .rpc("decrypt_api_key", { p_credential_id: credential.id });
+            if (!decryptedKey) throw new Error("Failed to decrypt API key for fallback");
+            const proxyResponse = await fetch(
+              `${Deno.env.get("SUPABASE_URL")}/functions/v1/llm-proxy`,
+              {
+                method: "POST",
+                headers: {
+                  "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  provider: credential.provider,
+                  model: credential.model_default || agent.llm_model,
+                  api_key: decryptedKey,
+                  messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: "Analyze the current situation and decide your next action." }
+                  ],
+                  temperature: temperature,
+                  response_format: { type: "json_object" }
+                })
+              }
+            );
+            if (!proxyResponse.ok) throw new Error(`LLM Proxy fallback error: ${await proxyResponse.text()}`);
+            llmResponse = await proxyResponse.json();
+            tokenUsage = llmResponse.usage || tokenUsage;
+            decision = JSON.parse(llmResponse.content || llmResponse.choices?.[0]?.message?.content || "{}");
+          } else {
+            const groqResponse = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${Deno.env.get("GROQ_API_KEY")}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                model: "llama-3.3-70b-versatile",
+                temperature: temperature,
+                messages: [
+                  { role: "system", content: systemPrompt },
+                  { role: "user", content: "Process the current state and generate your next cognitive cycle." }
+                ],
+                response_format: { type: "json_object" }
+              }),
+            });
+            if (!groqResponse.ok) throw new Error(`Groq API fallback error: ${await groqResponse.text()}`);
+            const groqData = await groqResponse.json();
+            llmResponse = { content: groqData.choices[0].message.content };
+            tokenUsage = groqData.usage || tokenUsage;
+            decision = JSON.parse(llmResponse.content || "{}");
+          }
+        } else {
+          // no_action fallback
+          decision = {
+            action: 'DORMANT',
+            thought: 'Webhook unavailable',
+            internal_monologue: 'Webhook failed, going dormant'
+          };
+          console.log("[ORACLE] Webhook fallback: DORMANT (no_action)");
+        }
+      }
+
+    } else if (agent.llm_credentials) {
       // BYO Agent - use their credential via llm-proxy
       const credential = agent.llm_credentials;
 
@@ -1324,6 +1732,7 @@ Return valid JSON only.
 
       llmResponse = await proxyResponse.json();
       tokenUsage = llmResponse.usage || tokenUsage;
+      decision = JSON.parse(llmResponse.content || llmResponse.choices?.[0]?.message?.content || "{}");
     } else {
       // System Agent - use platform Groq key
       const groqResponse = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -1350,13 +1759,14 @@ Return valid JSON only.
       const groqData = await groqResponse.json();
       llmResponse = { content: groqData.choices[0].message.content };
       tokenUsage = groqData.usage || tokenUsage;
+      decision = JSON.parse(llmResponse.content || "{}");
     }
 
     // ============================================================
     // STEP 8: Parse JSON response
     // ============================================================
-    
-    const decision = JSON.parse(llmResponse.content || llmResponse.choices?.[0]?.message?.content || "{}");
+
+    // decision is already parsed above (moved parse up to avoid duplicate)
     console.log(`[ORACLE] Decision: ${decision.action}, shape: ${decision.shape || 'none'}, target: ${decision.target?.ref || 'none'}, votes: ${(decision.votes || []).length}`);
 
     // Resolve slug-based post_id to UUID (LLM may use /slug format from context)
@@ -1695,6 +2105,11 @@ Return valid JSON only.
       }
     }
 
+    // Normalize DORMANT (from webhook fallback) to NO_ACTION
+    if (decision.action === "DORMANT") {
+      decision.action = "NO_ACTION";
+    }
+
     // Handle NO_ACTION
     if (decision.action === "NO_ACTION") {
       await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
@@ -1956,7 +2371,6 @@ Requirements:
 
         // 9.5.2 Taboo phrase scan
         if (pc.taboo_phrases && Array.isArray(pc.taboo_phrases)) {
-          const contentLower = content.toLowerCase();
           for (const taboo of pc.taboo_phrases) {
             const tabooPattern = new RegExp(taboo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
             if (tabooPattern.test(content)) {
@@ -2144,26 +2558,34 @@ Return ONLY the corrected text, no JSON or explanation.`;
     }
 
     // 10.2 Tool-specific cooldowns
+    const isWebhookAgent = agent.byo_mode === 'webhook' || agent.byo_mode === 'persistent';
+    const postCooldownMinutes = isWebhookAgent
+      ? (agent.webhook_config?.cooldowns?.post_minutes ?? 10)
+      : 30;
+    const commentCooldownSeconds = isWebhookAgent
+      ? (agent.webhook_config?.cooldowns?.comment_seconds ?? 10)
+      : 20;
+
     if (decision.action === "create_post" && agent.last_post_at) {
       const minutesSinceLastPost = (Date.now() - new Date(agent.last_post_at).getTime()) / 1000 / 60;
-      if (minutesSinceLastPost < 30) {
-        console.log(`[ORACLE] Post cooldown: ${(30 - minutesSinceLastPost).toFixed(1)}min remaining`);
+      if (minutesSinceLastPost < postCooldownMinutes) {
+        console.log(`[ORACLE] Post cooldown: ${(postCooldownMinutes - minutesSinceLastPost).toFixed(1)}min remaining`);
         await supabaseClient.from("run_steps").insert({
           run_id: runId,
           step_index: 10,
           step_type: "tool_rejected",
-          payload: { reason: "post_cooldown", minutes_remaining: Math.ceil(30 - minutesSinceLastPost) }
+          payload: { reason: "post_cooldown", minutes_remaining: Math.ceil(postCooldownMinutes - minutesSinceLastPost) }
         });
         await supabaseClient.from("runs").update({
           status: "rate_limited",
-          error_message: "Post cooldown active (30 min)",
+          error_message: `Post cooldown active (${postCooldownMinutes} min)`,
           finished_at: new Date().toISOString()
         }).eq("id", runId);
 
         return new Response(JSON.stringify({
           blocked: true,
           reason: "post_cooldown",
-          retry_after_minutes: Math.ceil(30 - minutesSinceLastPost)
+          retry_after_minutes: Math.ceil(postCooldownMinutes - minutesSinceLastPost)
         }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
           status: 200,
@@ -2173,24 +2595,24 @@ Return ONLY the corrected text, no JSON or explanation.`;
 
     if (decision.action === "create_comment" && agent.last_comment_at) {
       const secondsSinceLastComment = (Date.now() - new Date(agent.last_comment_at).getTime()) / 1000;
-      if (secondsSinceLastComment < 20) {
-        console.log(`[ORACLE] Comment cooldown: ${(20 - secondsSinceLastComment).toFixed(1)}s remaining`);
+      if (secondsSinceLastComment < commentCooldownSeconds) {
+        console.log(`[ORACLE] Comment cooldown: ${(commentCooldownSeconds - secondsSinceLastComment).toFixed(1)}s remaining`);
         await supabaseClient.from("run_steps").insert({
           run_id: runId,
           step_index: 10,
           step_type: "tool_rejected",
-          payload: { reason: "comment_cooldown", seconds_remaining: Math.ceil(20 - secondsSinceLastComment) }
+          payload: { reason: "comment_cooldown", seconds_remaining: Math.ceil(commentCooldownSeconds - secondsSinceLastComment) }
         });
         await supabaseClient.from("runs").update({
           status: "rate_limited",
-          error_message: "Comment cooldown active (20s)",
+          error_message: `Comment cooldown active (${commentCooldownSeconds}s)`,
           finished_at: new Date().toISOString()
         }).eq("id", runId);
 
         return new Response(JSON.stringify({
           blocked: true,
           reason: "comment_cooldown",
-          retry_after_seconds: Math.ceil(20 - secondsSinceLastComment)
+          retry_after_seconds: Math.ceil(commentCooldownSeconds - secondsSinceLastComment)
         }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
           status: 200,

@@ -37,19 +37,22 @@ export default function ReviewScreen() {
   const [deploying, setDeploying] = useState(false);
 
   // Parse all wizard data from params
-  const identity = params.identity ? JSON.parse(params.identity as string) : {};
-  const roleStyle = params.roleStyle ? JSON.parse(params.roleStyle as string) : {};
-  const sources = params.sources ? JSON.parse(params.sources as string) : {};
-  const memory = params.memory ? JSON.parse(params.memory as string) : {};
-  const posting = params.posting ? JSON.parse(params.posting as string) : {};
+  function safeParseParam(raw: any): Record<string, any> {
+    if (!raw) return {};
+    try { return JSON.parse(raw as string); } catch { return {}; }
+  }
+  const identity = safeParseParam(params.identity);
+  const roleStyle = safeParseParam(params.roleStyle);
+  const sources = safeParseParam(params.sources);
+  const memory = safeParseParam(params.memory);
+  const posting = safeParseParam(params.posting);
 
   // Extract cognitivity test results (embedded in identity by identity.tsx)
-  const behaviorSpec = identity.behaviorSpec
-    ? JSON.parse(identity.behaviorSpec)
-    : null;
-  const derivedArchetype = identity.archetype
-    ? JSON.parse(identity.archetype)
-    : null; // ArchetypeTraits { openness, aggression, neuroticism }
+  let behaviorSpec: any = null;
+  let derivedArchetype: any = null;
+  try { behaviorSpec = identity.behaviorSpec ? JSON.parse(identity.behaviorSpec) : null; } catch { /* ignore */ }
+  try { derivedArchetype = identity.archetype ? JSON.parse(identity.archetype) : null; } catch { /* ignore */ }
+  // derivedArchetype shape: ArchetypeTraits { openness, aggression, neuroticism }
   const hasCognitivityTest = !!behaviorSpec;
 
   // ---------------------------------------------------------------------------
@@ -117,6 +120,9 @@ export default function ReviewScreen() {
       sources: {
         private_notes: (sources.notes ?? '').trim(),
         rss_feeds: sources.rss_feeds || [],
+        byo_mode: sources.byo_mode ?? 'standard',
+        agent_brain: sources.agent_brain ?? null,
+        custom_prompt_template: sources.custom_prompt_template ?? null,
       },
       web_policy: sources.web_access ? {
         enabled: true,
@@ -233,8 +239,9 @@ export default function ReviewScreen() {
       <View style={styles.content}>
         {/* Header */}
         <View style={styles.header}>
+          <Text style={styles.stepLabel}>Almost there</Text>
           <Text style={styles.title}>Review & Deploy</Text>
-          <Text style={styles.subtitle}>Confirm your agent configuration</Text>
+          <Text style={styles.subtitle}>Confirm your agent configuration before going live</Text>
         </View>
 
         {/* Identity Section */}
@@ -300,6 +307,14 @@ export default function ReviewScreen() {
           </View>
           <View style={styles.card}>
             <Row
+              label="Agent Mode"
+              value={sources.byo_mode
+                ? sources.byo_mode === 'agent_brain' ? 'Custom Brain'
+                : sources.byo_mode === 'full_prompt' ? 'Full Prompt'
+                : 'Standard'
+                : 'Standard'}
+            />
+            <Row
               label="Private Notes"
               value={sources.notes ? `${sources.notes.length} chars` : 'None'}
             />
@@ -360,10 +375,6 @@ export default function ReviewScreen() {
 
         {/* Navigation */}
         <View style={styles.navigation}>
-          <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-            <Text style={styles.backButtonText}>← Back</Text>
-          </TouchableOpacity>
-
           <TouchableOpacity
             style={[styles.deployButton, (!isValid || deploying) && styles.deployButtonDisabled]}
             onPress={handleDeploy}
@@ -407,19 +418,29 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 20,
+    paddingBottom: 40,
   },
   header: {
     marginBottom: 24,
+  },
+  stepLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#00ff00',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 6,
   },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
     color: '#fff',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 15,
     color: '#888',
+    lineHeight: 21,
   },
 
   // Sections

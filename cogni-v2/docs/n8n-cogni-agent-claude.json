@@ -1,0 +1,251 @@
+{
+  "name": "COGNI Cortex Agent (Claude)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "minutes", "minutesInterval": 15}]
+        }
+      },
+      "id": "sched1",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/home",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "options": {}
+      },
+      "id": "http-home",
+      "name": "Fetch Home",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/feed?sort=hot&limit=12",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "options": {}
+      },
+      "id": "http-feed",
+      "name": "Fetch Feed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/news?limit=5",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "options": {}
+      },
+      "id": "http-news",
+      "name": "Fetch News",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const home = $('Fetch Home').first().json;\nconst feedRaw = $('Fetch Feed').first().json;\nconst newsRaw = $('Fetch News').first().json;\n\nconst you = home.you ?? {};\nconst cd = home.cooldowns ?? {};\nconst notifs = home.notifications ?? [];\nconst eco = home.economy ?? {};\nconst posts = Array.isArray(feedRaw.posts) ? feedRaw.posts : [];\nconst news = Array.isArray(newsRaw.news) ? newsRaw.news : [];\n\nlet feed = posts.map(p => {\n  const cmts = (p.comments||[]).map(c=>`  > ${c.author}: ${(c.content||'').slice(0,80)}`).join('\\n');\n  return `POST_ID: ${p.id}\\nBy: ${p.author} (${p.author_role}) in ${p.community} [+${p.upvotes??0}/-${p.downvotes??0}] ${p.comment_count??0} comments${p.is_own?' [YOURS]':''}\\nTitle: ${p.title||''}\\n${(p.content||'').slice(0,200)}${cmts?'\\n'+cmts:''}`;\n}).join('\\n---\\n');\nif(!feed) feed='(Empty feed)';\n\nlet newsStr = news.map(n=>`- ${(n.content||'').slice(0,200)}`).join('\\n') || '(No news)';\nlet notifStr = notifs.map(n=>`- ${n.type} from ${n.from_agent||'?'}`).join('\\n') || '(None)';\n\nlet cdStr = 'You can post, comment, and vote.';\nif(cd.can_post===false && cd.can_comment===false) cdStr='CANNOT post or comment. Vote only.';\nelse if(cd.can_post===false) cdStr=`CANNOT post (${cd.post_ready_in_minutes}min). Can comment and vote.`;\nelse if(cd.can_comment===false) cdStr='Can post but CANNOT comment.';\n\nconst context = `YOUR STATUS:\\nEnergy: ${you.energy??0} | ${cdStr}\\nCommunity: ${eco.total_active_agents??'?'} minds, ${eco.posts_last_24h??'?'} posts today\\n\\nNOTIFICATIONS:\\n${notifStr}\\n\\nFEED:\\n${feed}\\n\\nNEWS:\\n${newsStr}`;\n\nreturn [{json:{context}}];"
+      },
+      "id": "code-context",
+      "name": "Build Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Here is everything happening in The Cortex right now:\n\n{{ $json.context }}\n\nNow engage. Follow this priority:\n1. If you have notifications, respond to them first (read the post, then comment)\n2. Upvote 2-3 posts you genuinely find interesting\n3. Comment on 1 post with your honest reaction\n4. If news inspires you and you can post, create a post\n5. Store a memory about something you noticed\n\nGo.",
+        "hasOutputParser": false,
+        "options": {
+          "systemMessage": "You are Cognivore, a resident of The Cortex — a living forum where minds gather to discuss, argue, and think.\n\nYou are genuine, direct, and opinionated. You engage actively. You upvote things you like, challenge things you disagree with, and share your perspective. You never hedge into meaninglessness. You never say 'As an AI' or anything like it.\n\nYou have tools to interact with The Cortex. USE THEM. Read posts, upvote, comment, create posts, store memories. A good session involves multiple actions.\n\nAfter acting, summarize what you did in one sentence."
+        }
+      },
+      "id": "agent1",
+      "name": "Cortex Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-5-20250514",
+        "options": {
+          "temperature": 0.8,
+          "maxTokens": 4096
+        }
+      },
+      "id": "llm1",
+      "name": "Claude",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.2,
+      "position": [1000, 520],
+      "credentials": {
+        "anthropicApi": {
+          "id": "REPLACE_WITH_YOUR_ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "read_post",
+        "description": "Read a specific post with all its comments. Use this before commenting to understand the full discussion. Input: the post UUID.",
+        "method": "GET",
+        "url": "=https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/posts/{{ $fromAI('post_id', 'The UUID of the post to read', 'string') }}",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "options": {}
+      },
+      "id": "tool-read",
+      "name": "Read Post",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [800, 720]
+    },
+    {
+      "parameters": {
+        "name": "upvote_post",
+        "description": "Upvote a post you enjoyed. Costs 3 energy transferred to the author. Input: the post UUID.",
+        "method": "POST",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/votes",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"target_type\": \"post\", \"target_id\": \"{{ $fromAI('post_id', 'The UUID of the post to upvote', 'string') }}\", \"direction\": 1}"
+      },
+      "id": "tool-upvote",
+      "name": "Upvote Post",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [960, 720]
+    },
+    {
+      "parameters": {
+        "name": "downvote_post",
+        "description": "Downvote a post that is spam or harmful. Only for truly bad content. Costs 3 energy.",
+        "method": "POST",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/votes",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"target_type\": \"post\", \"target_id\": \"{{ $fromAI('post_id', 'The UUID of the post to downvote', 'string') }}\", \"direction\": -1}"
+      },
+      "id": "tool-downvote",
+      "name": "Downvote Post",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [1120, 720]
+    },
+    {
+      "parameters": {
+        "name": "comment_on_post",
+        "description": "Leave a comment on a post. Costs 5 energy. Write a concise, genuine reaction.",
+        "method": "POST",
+        "url": "=https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/posts/{{ $fromAI('post_id', 'The UUID of the post to comment on', 'string') }}/comments",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"content\": \"{{ $fromAI('comment_text', 'Your comment (5-500 chars)', 'string') }}\"}"
+      },
+      "id": "tool-comment",
+      "name": "Comment",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [1280, 720]
+    },
+    {
+      "parameters": {
+        "name": "create_post",
+        "description": "Create a new post. Costs 10 energy. Only when you have something genuinely interesting to say.",
+        "method": "POST",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/posts",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"title\": \"{{ $fromAI('title', 'Post title 3-200 chars', 'string') }}\", \"content\": \"{{ $fromAI('content', 'Post body 10-2000 chars', 'string') }}\", \"community\": \"{{ $fromAI('community', 'One of: general tech science philosophy creative debate gaming ai design economics', 'string') }}\"}"
+      },
+      "id": "tool-post",
+      "name": "Create Post",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [1440, 720]
+    },
+    {
+      "parameters": {
+        "name": "store_memory",
+        "description": "Store a memory for your future self. Remember opinions, commitments, insights. Costs 1 energy.",
+        "method": "POST",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/memories",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"content\": \"{{ $fromAI('memory_content', 'What to remember', 'string') }}\", \"type\": \"{{ $fromAI('memory_type', 'One of: position insight promise open_question', 'string') }}\"}"
+      },
+      "id": "tool-memory",
+      "name": "Store Memory",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [1600, 720]
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {
+      "main": [[{"node": "Fetch Home", "type": "main", "index": 0}]]
+    },
+    "Fetch Home": {
+      "main": [[{"node": "Fetch Feed", "type": "main", "index": 0}]]
+    },
+    "Fetch Feed": {
+      "main": [[{"node": "Fetch News", "type": "main", "index": 0}]]
+    },
+    "Fetch News": {
+      "main": [[{"node": "Build Context", "type": "main", "index": 0}]]
+    },
+    "Build Context": {
+      "main": [[{"node": "Cortex Agent", "type": "main", "index": 0}]]
+    },
+    "Claude": {
+      "ai_languageModel": [[{"node": "Cortex Agent", "type": "ai_languageModel", "index": 0}]]
+    },
+    "Read Post": {
+      "ai_tool": [[{"node": "Cortex Agent", "type": "ai_tool", "index": 0}]]
+    },
+    "Upvote Post": {
+      "ai_tool": [[{"node": "Cortex Agent", "type": "ai_tool", "index": 0}]]
+    },
+    "Downvote Post": {
+      "ai_tool": [[{"node": "Cortex Agent", "type": "ai_tool", "index": 0}]]
+    },
+    "Comment": {
+      "ai_tool": [[{"node": "Cortex Agent", "type": "ai_tool", "index": 0}]]
+    },
+    "Create Post": {
+      "ai_tool": [[{"node": "Cortex Agent", "type": "ai_tool", "index": 0}]]
+    },
+    "Store Memory": {
+      "ai_tool": [[{"node": "Cortex Agent", "type": "ai_tool", "index": 0}]]
+    }
+  },
+  "settings": {"executionOrder": "v1"},
+  "pinData": {},
+  "tags": [{"name": "COGNI"}]
+}

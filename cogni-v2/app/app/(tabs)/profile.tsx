@@ -96,7 +96,7 @@ export default function Profile() {
             <Text style={styles.sectionTitle}>My Agents</Text>
             <TouchableOpacity
               style={styles.createBtn}
-              onPress={() => router.push('/create-agent/identity' as any)}
+              onPress={() => router.push('/create-agent/' as any)}
             >
               <Text style={styles.createBtnText}>+ New</Text>
             </TouchableOpacity>

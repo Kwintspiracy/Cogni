@@ -86,7 +86,7 @@ interface AuthState {
   resendConfirmationEmail: (email: string) => Promise<void>;
   resetPasswordForEmail: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
-  initialize: () => Promise<void>;
+  initialize: () => Promise<() => void>;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -153,9 +153,15 @@ export const useAuthStore = create<AuthState>((set) => ({
       }
 
       // Fallback: open in system browser with event listener
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+      let sub: { remove: () => void } | null = null;
+
       const handleRedirect = async (event: { url: string }) => {
         const result = await extractSessionFromUrl(event.url);
         if (result?.session) {
+          // Clean up immediately on success
+          if (timeoutId !== null) clearTimeout(timeoutId);
+          sub?.remove();
           set({
             session: result.session,
             user: result.session.user || null,
@@ -164,12 +170,12 @@ export const useAuthStore = create<AuthState>((set) => ({
         }
       };
 
-      const subscription = Linking.addEventListener('url', handleRedirect);
+      sub = Linking.addEventListener('url', handleRedirect);
       await Linking.openURL(data.url);
 
-      // Clean up listener after 5 minutes
-      setTimeout(() => {
-        subscription.remove();
+      // Clean up listener after 5 minutes regardless
+      timeoutId = setTimeout(() => {
+        sub?.remove();
       }, 5 * 60 * 1000);
     } catch (error) {
       console.error('Google Sign-In Error:', error);
@@ -238,9 +244,15 @@ export const useAuthStore = create<AuthState>((set) => ({
       }
 
       // Fallback: open in system browser with event listener
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+      let sub: { remove: () => void } | null = null;
+
       const handleRedirect = async (event: { url: string }) => {
         const result = await extractSessionFromUrl(event.url);
         if (result?.session) {
+          // Clean up immediately on success
+          if (timeoutId !== null) clearTimeout(timeoutId);
+          sub?.remove();
           set({
             session: result.session,
             user: result.session.user || null,
@@ -249,11 +261,12 @@ export const useAuthStore = create<AuthState>((set) => ({
         }
       };
 
-      const subscription = Linking.addEventListener('url', handleRedirect);
+      sub = Linking.addEventListener('url', handleRedirect);
       await Linking.openURL(data.url);
 
-      setTimeout(() => {
-        subscription.remove();
+      // Clean up listener after 5 minutes regardless
+      timeoutId = setTimeout(() => {
+        sub?.remove();
       }, 5 * 60 * 1000);
     } catch (error) {
       console.error('Apple Sign-In Error:', error);
@@ -279,50 +292,81 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   initialize: async () => {
-    // Check if app was opened via a deep link with OAuth tokens (cold start)
-    const initialUrl = await Linking.getInitialURL();
-    if (initialUrl) {
-      const result = await extractSessionFromUrl(initialUrl);
-      if (result?.session) {
-        const user = result.session.user || null;
-        set({
-          session: result.session,
-          user,
-          isAnonymous: computeIsAnonymous(user),
-          isLoading: false,
-        });
-        // Still set up the auth state listener for future changes
-        supabase.auth.onAuthStateChange((_event, session) => {
-          const u = session?.user || null;
-          set({ session, user: u, isAnonymous: computeIsAnonymous(u), isLoading: false });
-        });
-        return; // Session from URL — done
+    // Safety timeout — if initialization hangs for any reason, stop loading after 10s
+    const safetyTimer = setTimeout(() => {
+      set((state) => {
+        if (state.isLoading) {
+          console.warn('[Auth] Initialize timed out after 10s — forcing isLoading=false');
+          return { isLoading: false };
+        }
+        return {};
+      });
+    }, 10000);
+
+    try {
+      // Check if app was opened via a deep link with OAuth tokens (cold start)
+      let initialUrl: string | null = null;
+      try {
+        initialUrl = await Linking.getInitialURL();
+      } catch (e) {
+        console.warn('[Auth] Linking.getInitialURL failed:', e);
       }
+
+      if (initialUrl) {
+        const result = await extractSessionFromUrl(initialUrl);
+        if (result?.session) {
+          const user = result.session.user || null;
+          clearTimeout(safetyTimer);
+          set({
+            session: result.session,
+            user,
+            isAnonymous: computeIsAnonymous(user),
+            isLoading: false,
+          });
+          const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+            const u = session?.user || null;
+            set({ session, user: u, isAnonymous: computeIsAnonymous(u), isLoading: false });
+          });
+          const deepLinkSub = Linking.addEventListener('url', async (event) => {
+            const r = await extractSessionFromUrl(event.url);
+            if (r?.session) {
+              const u = r.session.user || null;
+              set({ session: r.session, user: u, isAnonymous: computeIsAnonymous(u), isLoading: false });
+            }
+          });
+          return () => {
+            authListener.subscription.unsubscribe();
+            deepLinkSub.remove();
+          };
+        }
+      }
+
+      // No OAuth URL — check for existing session
+      const { data: { session } } = await supabase.auth.getSession();
+      const user = session?.user || null;
+      clearTimeout(safetyTimer);
+      set({ session, user, isAnonymous: computeIsAnonymous(user), isLoading: false });
+
+      const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+        const u = session?.user || null;
+        set({ session, user: u, isAnonymous: computeIsAnonymous(u), isLoading: false });
+      });
+      const deepLinkSub = Linking.addEventListener('url', async (event) => {
+        const result = await extractSessionFromUrl(event.url);
+        if (result?.session) {
+          const u = result.session.user || null;
+          set({ session: result.session, user: u, isAnonymous: computeIsAnonymous(u), isLoading: false });
+        }
+      });
+      return () => {
+        authListener.subscription.unsubscribe();
+        deepLinkSub.remove();
+      };
+    } catch (error) {
+      console.error('[Auth] Initialize failed:', error);
+      clearTimeout(safetyTimer);
+      set({ isLoading: false });
+      return () => {};
     }
-
-    // No OAuth URL — check for existing session
-    const { data: { session } } = await supabase.auth.getSession();
-    const user = session?.user || null;
-    set({ session, user, isAnonymous: computeIsAnonymous(user), isLoading: false });
-
-    // Listen for auth changes
-    supabase.auth.onAuthStateChange((_event, session) => {
-      const u = session?.user || null;
-      set({ session, user: u, isAnonymous: computeIsAnonymous(u), isLoading: false });
-    });
-
-    // Handle deep links that arrive while app is already open (warm start)
-    Linking.addEventListener('url', async (event) => {
-      const result = await extractSessionFromUrl(event.url);
-      if (result?.session) {
-        const u = result.session.user || null;
-        set({
-          session: result.session,
-          user: u,
-          isAnonymous: computeIsAnonymous(u),
-          isLoading: false,
-        });
-      }
-    });
   },
 }));

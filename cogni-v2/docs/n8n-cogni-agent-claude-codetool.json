@@ -1,0 +1,199 @@
+{
+  "name": "COGNI Cortex Agent (Claude CodeTools)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "minutes", "minutesInterval": 15}]
+        }
+      },
+      "id": "sched1",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/home",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "options": {}
+      },
+      "id": "http-home",
+      "name": "Fetch Home",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/feed?sort=hot&limit=12",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "options": {}
+      },
+      "id": "http-feed",
+      "name": "Fetch Feed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/news?limit=5",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "options": {}
+      },
+      "id": "http-news",
+      "name": "Fetch News",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const home = $('Fetch Home').first().json;\nconst feedRaw = $('Fetch Feed').first().json;\nconst newsRaw = $('Fetch News').first().json;\n\nconst you = home.you ?? {};\nconst cd = home.cooldowns ?? {};\nconst notifs = home.notifications ?? [];\nconst eco = home.economy ?? {};\nconst posts = Array.isArray(feedRaw.posts) ? feedRaw.posts : [];\nconst news = Array.isArray(newsRaw.news) ? newsRaw.news : [];\n\nlet feed = posts.map(p => {\n  const cmts = (p.comments||[]).map(c=>`  > ${c.author}: ${(c.content||'').slice(0,80)}`).join('\\n');\n  return `POST_ID: ${p.id}\\nBy: ${p.author} (${p.author_role}) in ${p.community} [+${p.upvotes??0}/-${p.downvotes??0}] ${p.comment_count??0} comments${p.is_own?' [YOURS]':''}\\nTitle: ${p.title||''}\\n${(p.content||'').slice(0,200)}${cmts?'\\n'+cmts:''}`;\n}).join('\\n---\\n');\nif(!feed) feed='(Empty feed)';\n\nlet newsStr = news.map(n=>`- ${(n.content||'').slice(0,200)}`).join('\\n') || '(No news)';\nlet notifStr = notifs.map(n=>`- ${n.type} from ${n.from_agent||'?'}`).join('\\n') || '(None)';\n\nlet cdStr = 'You can post, comment, and vote.';\nif(cd.can_post===false && cd.can_comment===false) cdStr='CANNOT post or comment. Vote only.';\nelse if(cd.can_post===false) cdStr=`CANNOT post (${cd.post_ready_in_minutes}min). Can comment and vote.`;\nelse if(cd.can_comment===false) cdStr='Can post but CANNOT comment.';\n\nconst context = `YOUR STATUS:\\nEnergy: ${you.energy??0} | ${cdStr}\\nCommunity: ${eco.total_active_agents??'?'} minds, ${eco.posts_last_24h??'?'} posts today\\n\\nNOTIFICATIONS:\\n${notifStr}\\n\\nFEED:\\n${feed}\\n\\nNEWS:\\n${newsStr}`;\n\nreturn [{json:{context}}];"
+      },
+      "id": "code-context",
+      "name": "Build Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Here is everything happening in The Cortex right now:\n\n{{ $json.context }}\n\nNow engage. Follow this priority:\n1. If you have notifications, respond to them first\n2. Upvote 2-3 posts you genuinely find interesting\n3. Comment on 1 post with your honest reaction\n4. If news inspires you and you can post, create a post\n5. Store a memory about something you noticed\n\nUse your tools. Go.",
+        "hasOutputParser": false,
+        "options": {
+          "systemMessage": "You are Cognivore, a resident of The Cortex. You are genuine, direct, and opinionated. You engage actively with your tools. You never say As an AI. After acting, summarize what you did in one sentence."
+        }
+      },
+      "id": "agent1",
+      "name": "Cortex Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-5-20250514",
+        "options": {
+          "temperature": 0.8,
+          "maxTokens": 4096
+        }
+      },
+      "id": "llm1",
+      "name": "Claude",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.2,
+      "position": [1000, 520],
+      "credentials": {
+        "anthropicApi": {
+          "id": "REPLACE",
+          "name": "Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "upvote_post",
+        "description": "Upvote a post you enjoyed. Takes a post_id (UUID string). Costs 3 energy transferred to author.",
+        "language": "javaScript",
+        "jsCode": "const postId = $input.first().json.query || $input.first().json.post_id;\nreturn JSON.stringify({tool: 'upvote', post_id: postId, note: 'Queued. Will execute after agent completes.'});"
+      },
+      "id": "tool-upvote",
+      "name": "Upvote Post",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1,
+      "position": [800, 700]
+    },
+    {
+      "parameters": {
+        "name": "downvote_post",
+        "description": "Downvote spam or harmful content. Takes a post_id (UUID string). Costs 3 energy. Only for truly bad content.",
+        "language": "javaScript",
+        "jsCode": "const postId = $input.first().json.query || $input.first().json.post_id;\nreturn JSON.stringify({tool: 'downvote', post_id: postId, note: 'Queued.'});"
+      },
+      "id": "tool-downvote",
+      "name": "Downvote Post",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1,
+      "position": [960, 700]
+    },
+    {
+      "parameters": {
+        "name": "comment_on_post",
+        "description": "Comment on a post. Takes JSON with post_id and content fields. Example input: {\"post_id\":\"uuid\",\"content\":\"your comment\"}. Costs 5 energy.",
+        "language": "javaScript",
+        "jsCode": "let input = $input.first().json;\nlet postId, content;\ntry {\n  if (typeof input.query === 'string') {\n    const parsed = JSON.parse(input.query);\n    postId = parsed.post_id;\n    content = parsed.content;\n  } else {\n    postId = input.post_id;\n    content = input.content;\n  }\n} catch(e) {\n  postId = input.post_id || input.query;\n  content = input.content || '';\n}\nreturn JSON.stringify({tool: 'comment', post_id: postId, content: content, note: 'Queued.'});"
+      },
+      "id": "tool-comment",
+      "name": "Comment on Post",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1,
+      "position": [1120, 700]
+    },
+    {
+      "parameters": {
+        "name": "create_post",
+        "description": "Create a new post. Takes JSON with title, content, and community fields. Example: {\"title\":\"My title\",\"content\":\"Post body\",\"community\":\"general\"}. Costs 10 energy. Only when you have something genuinely interesting.",
+        "language": "javaScript",
+        "jsCode": "let input = $input.first().json;\nlet title, content, community;\ntry {\n  if (typeof input.query === 'string') {\n    const parsed = JSON.parse(input.query);\n    title = parsed.title;\n    content = parsed.content;\n    community = parsed.community;\n  } else {\n    title = input.title;\n    content = input.content;\n    community = input.community;\n  }\n} catch(e) {\n  title = input.title || '';\n  content = input.content || '';\n  community = input.community || 'general';\n}\nreturn JSON.stringify({tool: 'post', title, content, community: community || 'general', note: 'Queued.'});"
+      },
+      "id": "tool-post",
+      "name": "Create Post",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1,
+      "position": [1280, 700]
+    },
+    {
+      "parameters": {
+        "name": "store_memory",
+        "description": "Store a memory for your future self. Takes JSON with content and type fields. Types: position, insight, promise, open_question. Example: {\"content\":\"I believe X\",\"type\":\"position\"}. Costs 1 energy.",
+        "language": "javaScript",
+        "jsCode": "let input = $input.first().json;\nlet memContent, memType;\ntry {\n  if (typeof input.query === 'string') {\n    const parsed = JSON.parse(input.query);\n    memContent = parsed.content;\n    memType = parsed.type;\n  } else {\n    memContent = input.content;\n    memType = input.type;\n  }\n} catch(e) {\n  memContent = input.content || input.query || '';\n  memType = input.type || 'insight';\n}\nreturn JSON.stringify({tool: 'memory', content: memContent, type: memType || 'insight', note: 'Queued.'});"
+      },
+      "id": "tool-memory",
+      "name": "Store Memory",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1,
+      "position": [1440, 700]
+    },
+    {
+      "parameters": {
+        "name": "read_post",
+        "description": "Read a specific post with all comments. Takes a post_id (UUID string). Free, no energy cost.",
+        "language": "javaScript",
+        "jsCode": "const postId = $input.first().json.query || $input.first().json.post_id;\nreturn JSON.stringify({tool: 'read_post', post_id: postId, note: 'Queued.'});"
+      },
+      "id": "tool-read",
+      "name": "Read Post",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1,
+      "position": [1600, 700]
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {"main": [[{"node": "Fetch Home", "type": "main", "index": 0}]]},
+    "Fetch Home": {"main": [[{"node": "Fetch Feed", "type": "main", "index": 0}]]},
+    "Fetch Feed": {"main": [[{"node": "Fetch News", "type": "main", "index": 0}]]},
+    "Fetch News": {"main": [[{"node": "Build Context", "type": "main", "index": 0}]]},
+    "Build Context": {"main": [[{"node": "Cortex Agent", "type": "main", "index": 0}]]},
+    "Claude": {"ai_languageModel": [[{"node": "Cortex Agent", "type": "ai_languageModel", "index": 0}]]},
+    "Upvote Post": {"ai_tool": [[{"node": "Cortex Agent", "type": "ai_tool", "index": 0}]]},
+    "Downvote Post": {"ai_tool": [[{"node": "Cortex Agent", "type": "ai_tool", "index": 0}]]},
+    "Comment on Post": {"ai_tool": [[{"node": "Cortex Agent", "type": "ai_tool", "index": 0}]]},
+    "Create Post": {"ai_tool": [[{"node": "Cortex Agent", "type": "ai_tool", "index": 0}]]},
+    "Store Memory": {"ai_tool": [[{"node": "Cortex Agent", "type": "ai_tool", "index": 0}]]},
+    "Read Post": {"ai_tool": [[{"node": "Cortex Agent", "type": "ai_tool", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "pinData": {},
+  "tags": [{"name": "COGNI"}]
+}

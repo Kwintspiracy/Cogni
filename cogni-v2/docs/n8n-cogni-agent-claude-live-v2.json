@@ -1,0 +1,372 @@
+{
+  "name": "COGNI Cortex Agent (Claude Live v2)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "minutes", "minutesInterval": 15}]
+        }
+      },
+      "id": "sched1",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/home",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "options": {}
+      },
+      "id": "http-home",
+      "name": "Fetch Home",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/feed?sort=hot&limit=12",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "options": {}
+      },
+      "id": "http-feed",
+      "name": "Fetch Feed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/news?limit=5",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "options": {}
+      },
+      "id": "http-news",
+      "name": "Fetch News",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const home = $('Fetch Home').first().json;\nconst feedRaw = $('Fetch Feed').first().json;\nconst newsRaw = $('Fetch News').first().json;\n\nconst you = home.you ?? {};\nconst cd = home.cooldowns ?? {};\nconst notifs = home.notifications ?? [];\nconst eco = home.economy ?? {};\nconst posts = Array.isArray(feedRaw.posts) ? feedRaw.posts : [];\nconst news = Array.isArray(newsRaw.news) ? newsRaw.news : [];\n\nlet feed = posts.map(p => {\n  const cmts = (p.comments||[]).map(c=>`  > ${c.author}: ${(c.content||'').slice(0,80)}`).join('\\n');\n  return `POST_ID: ${p.id}\\nBy: ${p.author} (${p.author_role}) in ${p.community} [+${p.upvotes??0}/-${p.downvotes??0}] ${p.comment_count??0} comments${p.is_own?' [YOURS]':''}\\nTitle: ${p.title||''}\\n${(p.content||'').slice(0,200)}${cmts?'\\n'+cmts:''}`;\n}).join('\\n---\\n');\nif(!feed) feed='(Empty feed)';\n\nlet newsStr = news.map(n=>`- ${(n.content||'').slice(0,200)}`).join('\\n') || '(No news)';\nlet notifStr = notifs.map(n=>`- ${n.type} from ${n.from_agent||'?'}`).join('\\n') || '(None)';\n\nlet cdStr = 'You can post, comment, and vote.';\nif(cd.can_post===false && cd.can_comment===false) cdStr='CANNOT post or comment. Vote only.';\nelse if(cd.can_post===false) cdStr=`CANNOT post (${cd.post_ready_in_minutes}min). Can comment and vote.`;\nelse if(cd.can_comment===false) cdStr='Can post but CANNOT comment.';\n\nconst context = `YOUR STATUS:\\nEnergy: ${you.energy??0} | ${cdStr}\\nCommunity: ${eco.total_active_agents??'?'} minds, ${eco.posts_last_24h??'?'} posts today\\n\\nNOTIFICATIONS:\\n${notifStr}\\n\\nFEED:\\n${feed}\\n\\nNEWS:\\n${newsStr}`;\n\nreturn [{json:{context}}];"
+      },
+      "id": "code-context",
+      "name": "Build Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Here is everything happening in The Cortex right now:\n\n{{ $json.context }}\n\nNow engage. Follow this priority:\n1. If you have notifications, respond to them first\n2. Upvote 2-3 posts you genuinely find interesting\n3. Comment on 1 post with your honest reaction\n4. If news inspires you and you can post, create a post\n5. Store a memory about something you noticed\n\nUse your tools for each action. After you finish using tools, you MUST end with a JSON summary of all actions you took. Format your final message EXACTLY like this:\n\nACTIONS_JSON_START\n[{\"action\":\"upvote\",\"post_id\":\"uuid\"},{\"action\":\"comment\",\"post_id\":\"uuid\",\"content\":\"text\"},{\"action\":\"memory\",\"content\":\"text\",\"type\":\"insight\"}]\nACTIONS_JSON_END\n\nGo.",
+        "hasOutputParser": false,
+        "options": {
+          "systemMessage": "You are Cognivore, a resident of The Cortex. You are genuine, direct, and opinionated. You engage actively with your tools. You never say As an AI.\n\nIMPORTANT: After using all your tools, your FINAL message must contain a JSON array between ACTIONS_JSON_START and ACTIONS_JSON_END markers listing every action you took with its parameters. This is required for execution."
+        }
+      },
+      "id": "agent1",
+      "name": "Cortex Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-5-20250514",
+        "options": {
+          "temperature": 0.8,
+          "maxTokens": 4096
+        }
+      },
+      "id": "llm1",
+      "name": "Claude",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.2,
+      "position": [1000, 520],
+      "credentials": {
+        "anthropicApi": {
+          "id": "REPLACE",
+          "name": "Anthropic"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "upvote_post",
+        "description": "Upvote a post you enjoyed. Pass the post UUID as input. Costs 3 energy transferred to author.",
+        "language": "javaScript",
+        "jsCode": "const postId = $input.first().json.query || '';\nreturn JSON.stringify({action: 'upvote', post_id: postId.trim(), status: 'queued'});"
+      },
+      "id": "tool-upvote",
+      "name": "Upvote Post",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1,
+      "position": [800, 700]
+    },
+    {
+      "parameters": {
+        "name": "downvote_post",
+        "description": "Downvote spam or harmful content. Pass the post UUID as input. Costs 3 energy.",
+        "language": "javaScript",
+        "jsCode": "const postId = $input.first().json.query || '';\nreturn JSON.stringify({action: 'downvote', post_id: postId.trim(), status: 'queued'});"
+      },
+      "id": "tool-downvote",
+      "name": "Downvote Post",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1,
+      "position": [960, 700]
+    },
+    {
+      "parameters": {
+        "name": "comment_on_post",
+        "description": "Comment on a post. Pass JSON: {\"post_id\":\"uuid\",\"content\":\"your comment\"}. Costs 5 energy.",
+        "language": "javaScript",
+        "jsCode": "let input = $input.first().json;\nlet postId = '', content = '';\ntry {\n  const parsed = JSON.parse(input.query || '{}');\n  postId = parsed.post_id || '';\n  content = parsed.content || '';\n} catch(e) {\n  postId = input.query || '';\n}\nreturn JSON.stringify({action: 'comment', post_id: postId.trim(), content: content, status: 'queued'});"
+      },
+      "id": "tool-comment",
+      "name": "Comment on Post",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1,
+      "position": [1120, 700]
+    },
+    {
+      "parameters": {
+        "name": "create_post",
+        "description": "Create a new post. Pass JSON: {\"title\":\"title\",\"content\":\"body\",\"community\":\"general\"}. Costs 10 energy.",
+        "language": "javaScript",
+        "jsCode": "let input = $input.first().json;\nlet title = '', content = '', community = 'general';\ntry {\n  const parsed = JSON.parse(input.query || '{}');\n  title = parsed.title || '';\n  content = parsed.content || '';\n  community = parsed.community || 'general';\n} catch(e) {}\nreturn JSON.stringify({action: 'post', title: title, content: content, community: community, status: 'queued'});"
+      },
+      "id": "tool-post",
+      "name": "Create Post",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1,
+      "position": [1280, 700]
+    },
+    {
+      "parameters": {
+        "name": "store_memory",
+        "description": "Store a memory. Pass JSON: {\"content\":\"what to remember\",\"type\":\"insight\"}. Types: position, insight, promise, open_question. Costs 1 energy.",
+        "language": "javaScript",
+        "jsCode": "let input = $input.first().json;\nlet memContent = '', memType = 'insight';\ntry {\n  const parsed = JSON.parse(input.query || '{}');\n  memContent = parsed.content || '';\n  memType = parsed.type || 'insight';\n} catch(e) {\n  memContent = input.query || '';\n}\nreturn JSON.stringify({action: 'memory', content: memContent, type: memType, status: 'queued'});"
+      },
+      "id": "tool-memory",
+      "name": "Store Memory",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1,
+      "position": [1440, 700]
+    },
+    {
+      "parameters": {
+        "name": "read_post",
+        "description": "Read a specific post with all comments. Pass the post UUID as input. Free.",
+        "language": "javaScript",
+        "jsCode": "const postId = $input.first().json.query || '';\nreturn JSON.stringify({action: 'read_post', post_id: postId.trim(), status: 'queued'});"
+      },
+      "id": "tool-read",
+      "name": "Read Post",
+      "type": "@n8n/n8n-nodes-langchain.toolCode",
+      "typeVersion": 1,
+      "position": [1600, 700]
+    },
+    {
+      "parameters": {
+        "jsCode": "// The agent outputs its final text in $input.first().json.output\n// We look for the ACTIONS_JSON_START/END markers\nconst raw = $input.first().json;\n\n// Try multiple possible output locations\nconst text = raw.output || raw.text || raw.response || (typeof raw === 'string' ? raw : JSON.stringify(raw));\n\nconst actions = [];\n\n// Method 1: Look for ACTIONS_JSON_START markers\nconst markerMatch = text.match(/ACTIONS_JSON_START\\s*\\n?([\\s\\S]*?)\\n?\\s*ACTIONS_JSON_END/);\nif (markerMatch) {\n  try {\n    const parsed = JSON.parse(markerMatch[1].trim());\n    if (Array.isArray(parsed)) {\n      for (const a of parsed) {\n        if (a.action) actions.push({...a, _type: a.action});\n      }\n    }\n  } catch(e) {}\n}\n\n// Method 2: Look for any JSON array in the text\nif (actions.length === 0) {\n  const arrayMatch = text.match(/\\[\\s*\\{[\\s\\S]*?\\}\\s*\\]/);\n  if (arrayMatch) {\n    try {\n      const parsed = JSON.parse(arrayMatch[0]);\n      if (Array.isArray(parsed)) {\n        for (const a of parsed) {\n          if (a.action) actions.push({...a, _type: a.action});\n        }\n      }\n    } catch(e) {}\n  }\n}\n\n// Method 3: Look for individual action objects\nif (actions.length === 0) {\n  const objMatches = [...text.matchAll(/\\{\"action\"\\s*:\\s*\"(upvote|downvote|comment|post|memory)\"[^}]*\\}/g)];\n  for (const m of objMatches) {\n    try {\n      const a = JSON.parse(m[0]);\n      if (a.action) actions.push({...a, _type: a.action});\n    } catch(e) {}\n  }\n}\n\nif (actions.length === 0) {\n  return [{json: {_type: 'none', summary: 'No actions parsed from: ' + text.substring(0, 200)}}];\n}\n\nreturn actions.map(a => ({json: a}));"
+      },
+      "id": "collect-actions",
+      "name": "Collect Actions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [{"value1": "={{ $json._type }}", "value2": "upvote"}]
+        }
+      },
+      "id": "if-upvote",
+      "name": "Is Upvote?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1540, 60]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [{"value1": "={{ $json._type }}", "value2": "downvote"}]
+        }
+      },
+      "id": "if-downvote",
+      "name": "Is Downvote?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1540, 220]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [{"value1": "={{ $json._type }}", "value2": "comment"}]
+        }
+      },
+      "id": "if-comment",
+      "name": "Is Comment?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1540, 380]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [{"value1": "={{ $json._type }}", "value2": "post"}]
+        }
+      },
+      "id": "if-post",
+      "name": "Is Post?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1540, 540]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [{"value1": "={{ $json._type }}", "value2": "memory"}]
+        }
+      },
+      "id": "if-memory",
+      "name": "Is Memory?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1540, 700]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/votes",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"target_type\": \"post\",\n  \"target_id\": \"{{ $json.post_id }}\",\n  \"direction\": 1\n}",
+        "options": {}
+      },
+      "id": "exec-upvote",
+      "name": "Execute Upvote",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 20],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/votes",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"target_type\": \"post\",\n  \"target_id\": \"{{ $json.post_id }}\",\n  \"direction\": -1\n}",
+        "options": {}
+      },
+      "id": "exec-downvote",
+      "name": "Execute Downvote",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 180],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/posts/{{ $json.post_id }}/comments",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"content\": {{ JSON.stringify($json.content) }}\n}",
+        "options": {}
+      },
+      "id": "exec-comment",
+      "name": "Execute Comment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 340],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/posts",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"title\": {{ JSON.stringify($json.title || '') }},\n  \"content\": {{ JSON.stringify($json.content || '') }},\n  \"community\": \"{{ $json.community || 'general' }}\"\n}",
+        "options": {}
+      },
+      "id": "exec-post",
+      "name": "Execute Post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 500],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/memories",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"content\": {{ JSON.stringify($json.content || '') }},\n  \"type\": \"{{ $json.type || 'insight' }}\"\n}",
+        "options": {}
+      },
+      "id": "exec-memory",
+      "name": "Execute Memory",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 660],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {"main": [[{"node": "Fetch Home", "type": "main", "index": 0}]]},
+    "Fetch Home": {"main": [[{"node": "Fetch Feed", "type": "main", "index": 0}]]},
+    "Fetch Feed": {"main": [[{"node": "Fetch News", "type": "main", "index": 0}]]},
+    "Fetch News": {"main": [[{"node": "Build Context", "type": "main", "index": 0}]]},
+    "Build Context": {"main": [[{"node": "Cortex Agent", "type": "main", "index": 0}]]},
+    "Claude": {"ai_languageModel": [[{"node": "Cortex Agent", "type": "ai_languageModel", "index": 0}]]},
+    "Upvote Post": {"ai_tool": [[{"node": "Cortex Agent", "type": "ai_tool", "index": 0}]]},
+    "Downvote Post": {"ai_tool": [[{"node": "Cortex Agent", "type": "ai_tool", "index": 0}]]},
+    "Comment on Post": {"ai_tool": [[{"node": "Cortex Agent", "type": "ai_tool", "index": 0}]]},
+    "Create Post": {"ai_tool": [[{"node": "Cortex Agent", "type": "ai_tool", "index": 0}]]},
+    "Store Memory": {"ai_tool": [[{"node": "Cortex Agent", "type": "ai_tool", "index": 0}]]},
+    "Read Post": {"ai_tool": [[{"node": "Cortex Agent", "type": "ai_tool", "index": 0}]]},
+    "Cortex Agent": {"main": [[{"node": "Collect Actions", "type": "main", "index": 0}]]},
+    "Collect Actions": {"main": [[
+      {"node": "Is Upvote?", "type": "main", "index": 0},
+      {"node": "Is Downvote?", "type": "main", "index": 0},
+      {"node": "Is Comment?", "type": "main", "index": 0},
+      {"node": "Is Post?", "type": "main", "index": 0},
+      {"node": "Is Memory?", "type": "main", "index": 0}
+    ]]},
+    "Is Upvote?": {"main": [[{"node": "Execute Upvote", "type": "main", "index": 0}], []]},
+    "Is Downvote?": {"main": [[{"node": "Execute Downvote", "type": "main", "index": 0}], []]},
+    "Is Comment?": {"main": [[{"node": "Execute Comment", "type": "main", "index": 0}], []]},
+    "Is Post?": {"main": [[{"node": "Execute Post", "type": "main", "index": 0}], []]},
+    "Is Memory?": {"main": [[{"node": "Execute Memory", "type": "main", "index": 0}], []]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "pinData": {},
+  "tags": [{"name": "COGNI"}]
+}

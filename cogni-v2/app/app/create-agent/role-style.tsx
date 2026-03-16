@@ -4,6 +4,26 @@ import { router, useLocalSearchParams, Stack } from 'expo-router';
 import RolePicker, { AgentRole } from '@/components/RolePicker';
 import StyleSlider from '@/components/StyleSlider';
 
+function WizardProgress({ step, total }: { step: number; total: number }) {
+  return (
+    <View style={progressStyles.container}>
+      {Array.from({ length: total }).map((_, i) => (
+        <View
+          key={i}
+          style={[progressStyles.segment, i < step ? progressStyles.segmentDone : progressStyles.segmentPending]}
+        />
+      ))}
+    </View>
+  );
+}
+
+const progressStyles = StyleSheet.create({
+  container: { flexDirection: 'row', gap: 4, marginBottom: 28 },
+  segment: { flex: 1, height: 3, borderRadius: 2 },
+  segmentDone: { backgroundColor: '#00ff00' },
+  segmentPending: { backgroundColor: '#222' },
+});
+
 export default function RoleStyleScreen() {
   const params = useLocalSearchParams();
   const identity = params.identity ? JSON.parse(params.identity as string) : null;
@@ -33,18 +53,21 @@ export default function RoleStyleScreen() {
   };
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
       <Stack.Screen options={{ title: 'Step 2: Role & Style' }} />
       <View style={styles.content}>
+        {/* Step progress */}
+        <WizardProgress step={2} total={5} />
+
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.title}>Choose Role & Style</Text>
-          <Text style={styles.subtitle}>Step 2 of 5: Role and Style</Text>
+          <Text style={styles.title}>Role & Style</Text>
+          <Text style={styles.subtitle}>Step 2 of 5 — Define how your agent behaves</Text>
         </View>
 
         {/* Role Selection */}
         <View style={styles.section}>
-          <Text style={styles.label}>Agent Role</Text>
+          <Text style={styles.label}>Agent Role <Text style={styles.required}>*</Text></Text>
           <Text style={styles.helperText}>
             Each role has a unique personality, writing style, and default archetype.
           </Text>
@@ -81,20 +104,17 @@ export default function RoleStyleScreen() {
         </View>
 
         {/* Navigation Buttons */}
+        {!selectedRole && <Text style={styles.requiredHint}>{'* Select a role to continue'}</Text>}
         <View style={styles.navigation}>
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={handleBack}
-          >
-            <Text style={styles.backButtonText}>← Back</Text>
+          <TouchableOpacity style={styles.backButton} onPress={handleBack}>
+            <Text style={styles.backButtonText}>Back</Text>
           </TouchableOpacity>
-
           <TouchableOpacity
             style={[styles.nextButton, !selectedRole && styles.nextButtonDisabled]}
             onPress={handleNext}
             disabled={!selectedRole}
           >
-            <Text style={styles.nextButtonText}>Next: Sources →</Text>
+            <Text style={styles.nextButtonText}>Next</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -109,19 +129,31 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 20,
+    paddingBottom: 40,
   },
   header: {
-    marginBottom: 30,
+    marginBottom: 24,
   },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
     color: '#fff',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 15,
     color: '#888',
+    lineHeight: 21,
+  },
+  required: {
+    color: '#00ff00',
+    fontSize: 16,
+  },
+  requiredHint: {
+    fontSize: 13,
+    color: '#666',
+    marginBottom: 10,
+    textAlign: 'center',
   },
   section: {
     marginBottom: 32,

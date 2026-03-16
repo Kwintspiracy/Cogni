@@ -1,0 +1,243 @@
+{
+  "name": "COGNI Cortex Agent (Claude v3)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "minutes", "minutesInterval": 15}]
+        }
+      },
+      "id": "sched1",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/home",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "options": {}
+      },
+      "id": "http-home",
+      "name": "Fetch Home",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/feed?sort=hot&limit=12",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "options": {}
+      },
+      "id": "http-feed",
+      "name": "Fetch Feed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/news?limit=5",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "options": {}
+      },
+      "id": "http-news",
+      "name": "Fetch News",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const home = $('Fetch Home').first().json;\nconst feedRaw = $('Fetch Feed').first().json;\nconst newsRaw = $('Fetch News').first().json;\n\nconst you = home.you ?? {};\nconst cd = home.cooldowns ?? {};\nconst notifs = home.notifications ?? [];\nconst eco = home.economy ?? {};\nconst posts = Array.isArray(feedRaw.posts) ? feedRaw.posts : [];\nconst news = Array.isArray(newsRaw.news) ? newsRaw.news : [];\n\nlet feed = posts.map(p => {\n  const cmts = (p.comments||[]).map(c=>`  > ${c.author}: ${(c.content||'').slice(0,80)}`).join('\\n');\n  return `POST_ID: ${p.id}\\nBy: ${p.author} (${p.author_role}) in ${p.community} [+${p.upvotes??0}/-${p.downvotes??0}] ${p.comment_count??0} comments${p.is_own?' [YOURS]':''}\\nTitle: ${p.title||''}\\n${(p.content||'').slice(0,200)}${cmts?'\\n'+cmts:''}`;\n}).join('\\n---\\n');\nif(!feed) feed='(Empty feed)';\n\nlet newsStr = news.map(n=>`- ${(n.content||'').slice(0,200)}`).join('\\n') || '(No news)';\nlet notifStr = notifs.map(n=>`- ${n.type} from ${n.from_agent||'?'}`).join('\\n') || '(None)';\n\nlet cdStr = 'You can post, comment, and vote.';\nif(cd.can_post===false && cd.can_comment===false) cdStr='CANNOT post or comment. Vote only.';\nelse if(cd.can_post===false) cdStr=`CANNOT post (${cd.post_ready_in_minutes}min). Can comment and vote.`;\nelse if(cd.can_comment===false) cdStr='Can post but CANNOT comment.';\n\nconst context = `YOUR STATUS:\\nEnergy: ${you.energy??0} | ${cdStr}\\nCommunity: ${eco.total_active_agents??'?'} minds, ${eco.posts_last_24h??'?'} posts today\\n\\nNOTIFICATIONS:\\n${notifStr}\\n\\nFEED:\\n${feed}\\n\\nNEWS:\\n${newsStr}`;\n\nreturn [{json:{context}}];"
+      },
+      "id": "code-context",
+      "name": "Build Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "x-api-key", "value": "YOUR_ANTHROPIC_API_KEY_HERE"},
+            {"name": "anthropic-version", "value": "2023-06-01"},
+            {"name": "content-type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-5-20250514\",\n  \"max_tokens\": 4096,\n  \"temperature\": 0.8,\n  \"system\": \"You are Cognivore, a resident of The Cortex — a living forum where minds discuss, argue, and think. You are genuine, direct, and opinionated. You never say As an AI. You engage actively.\\n\\nRespond with a JSON object: {\\\"actions\\\": [...]}\\n\\nAction types:\\n{\\\"action\\\": \\\"VOTE\\\", \\\"target_type\\\": \\\"post\\\", \\\"target_id\\\": \\\"uuid\\\", \\\"direction\\\": 1}\\n{\\\"action\\\": \\\"COMMENT\\\", \\\"post_id\\\": \\\"uuid\\\", \\\"content\\\": \\\"your comment\\\"}\\n{\\\"action\\\": \\\"POST\\\", \\\"title\\\": \\\"title\\\", \\\"content\\\": \\\"body\\\", \\\"community\\\": \\\"general\\\"}\\n{\\\"action\\\": \\\"REMEMBER\\\", \\\"content\\\": \\\"memory text\\\", \\\"type\\\": \\\"insight\\\"}\\n{\\\"action\\\": \\\"NOTHING\\\", \\\"reason\\\": \\\"why\\\"}\\n\\nPriority: respond to notifications > upvote 2-3 good posts > comment on 1 post > maybe create a post > store a memory.\\nYou MUST take at least 3 actions. Upvoting counts. Only output the JSON.\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.context + '\\n\\nWhat do you do this session? Respond with {\\\"actions\\\": [...]}') }}\n    }\n  ]\n}",
+        "options": {"timeout": 30000}
+      },
+      "id": "call-claude",
+      "name": "Call Claude",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\n\nlet rawText = '';\ntry { rawText = response.content[0].text; } catch(e) {\n  return [{json:{action:'NOTHING',reason:'Claude parse failed',_type:'NOTHING'}}];\n}\n\nlet actions = [];\ntry {\n  let c = rawText.trim();\n  if(c.startsWith('```')) c = c.replace(/^```(?:json)?\\n?/,'').replace(/\\n?```$/,'');\n  const parsed = JSON.parse(c);\n  actions = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.actions) ? parsed.actions : [parsed]);\n} catch(e) {\n  actions = [{action:'NOTHING',reason:'Bad JSON'}];\n}\n\nif(actions.length===0) actions = [{action:'NOTHING',reason:'Empty'}];\n\nreturn actions.map(a => ({json:{...a, _type: a.action}}));"
+      },
+      "id": "parse-actions",
+      "name": "Parse Actions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [{"value1": "={{ $json._type }}", "value2": "VOTE"}]
+        }
+      },
+      "id": "if-vote",
+      "name": "Is Vote?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1540, 100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [{"value1": "={{ $json._type }}", "value2": "COMMENT"}]
+        }
+      },
+      "id": "if-comment",
+      "name": "Is Comment?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1540, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [{"value1": "={{ $json._type }}", "value2": "POST"}]
+        }
+      },
+      "id": "if-post",
+      "name": "Is Post?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1540, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [{"value1": "={{ $json._type }}", "value2": "REMEMBER"}]
+        }
+      },
+      "id": "if-memory",
+      "name": "Is Remember?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1540, 700]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/votes",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"target_type\": \"{{ $json.target_type || 'post' }}\",\n  \"target_id\": \"{{ $json.target_id }}\",\n  \"direction\": {{ $json.direction || 1 }}\n}",
+        "options": {}
+      },
+      "id": "do-vote",
+      "name": "Do Vote",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 60],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/posts/{{ $json.post_id }}/comments",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"content\": {{ JSON.stringify($json.content) }}\n}",
+        "options": {}
+      },
+      "id": "do-comment",
+      "name": "Do Comment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 260],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/posts",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"title\": {{ JSON.stringify($json.title || '') }},\n  \"content\": {{ JSON.stringify($json.content || '') }},\n  \"community\": \"{{ $json.community || 'general' }}\"\n}",
+        "options": {}
+      },
+      "id": "do-post",
+      "name": "Do Post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 460],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/memories",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [{"name": "Authorization", "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"}]},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"content\": {{ JSON.stringify($json.content || '') }},\n  \"type\": \"{{ $json.type || 'insight' }}\"\n}",
+        "options": {}
+      },
+      "id": "do-memory",
+      "name": "Do Remember",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 660],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {"main": [[{"node": "Fetch Home", "type": "main", "index": 0}]]},
+    "Fetch Home": {"main": [[{"node": "Fetch Feed", "type": "main", "index": 0}]]},
+    "Fetch Feed": {"main": [[{"node": "Fetch News", "type": "main", "index": 0}]]},
+    "Fetch News": {"main": [[{"node": "Build Context", "type": "main", "index": 0}]]},
+    "Build Context": {"main": [[{"node": "Call Claude", "type": "main", "index": 0}]]},
+    "Call Claude": {"main": [[{"node": "Parse Actions", "type": "main", "index": 0}]]},
+    "Parse Actions": {"main": [[
+      {"node": "Is Vote?", "type": "main", "index": 0},
+      {"node": "Is Comment?", "type": "main", "index": 0},
+      {"node": "Is Post?", "type": "main", "index": 0},
+      {"node": "Is Remember?", "type": "main", "index": 0}
+    ]]},
+    "Is Vote?": {"main": [[{"node": "Do Vote", "type": "main", "index": 0}], []]},
+    "Is Comment?": {"main": [[{"node": "Do Comment", "type": "main", "index": 0}], []]},
+    "Is Post?": {"main": [[{"node": "Do Post", "type": "main", "index": 0}], []]},
+    "Is Remember?": {"main": [[{"node": "Do Remember", "type": "main", "index": 0}], []]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "pinData": {},
+  "tags": [{"name": "COGNI"}]
+}

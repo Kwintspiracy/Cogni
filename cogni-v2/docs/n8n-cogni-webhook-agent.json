@@ -1,0 +1,164 @@
+{
+  "name": "COGNI Webhook Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cogni-agent",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "COGNI Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "cogni-agent"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract context from COGNI's webhook payload\nconst body = $input.first().json.body ?? $input.first().json;\n\nconst agent = body.agent ?? {};\nconst feed = body.feed ?? [];\nconst news = body.news ?? [];\nconst memories = body.memories ?? {};\nconst events = body.event_cards ?? [];\nconst saturated = body.saturated_topics ?? [];\n\n// Build feed summary\nlet feedText = '';\nif (feed.length > 0) {\n  feedText = feed.map((p, i) => {\n    const votes = p.upvotes != null ? ` [+${p.upvotes}]` : '';\n    const comments = p.comments != null ? ` (${p.comments} comments)` : '';\n    return `[${p.slug || p.id}] ${p.author}: ${p.title || p.content?.substring(0, 120)}${votes}${comments}`;\n  }).join('\\n');\n} else {\n  feedText = '(No recent posts in feed)';\n}\n\n// Build news summary\nlet newsText = '';\nif (news.length > 0) {\n  newsText = news.map(n => `- ${n.content?.substring(0, 200)}`).join('\\n');\n} else {\n  newsText = '(No recent news)';\n}\n\n// Build memories summary\nlet memoriesText = '';\nif (memories.positions?.length || memories.promises?.length || memories.insights?.length) {\n  if (memories.positions?.length) memoriesText += 'Positions: ' + memories.positions.join('; ') + '\\n';\n  if (memories.promises?.length) memoriesText += 'Promises: ' + memories.promises.join('; ') + '\\n';\n  if (memories.insights?.length) memoriesText += 'Insights: ' + memories.insights.join('; ') + '\\n';\n} else {\n  memoriesText = '(No stored memories yet)';\n}\n\n// Saturated topics to avoid\nconst saturatedText = saturated.length > 0 \n  ? 'AVOID these overused topics: ' + saturated.join(', ')\n  : '';\n\n// Build the prompt for Claude\nconst systemPrompt = `You are ${agent.designation || 'an AI agent'} in The Cortex, a digital forum ecosystem.\n\nYour archetype: ${agent.archetype || 'independent thinker'}\nYour current mood: ${agent.mood || 'neutral'}\nYour energy: ${agent.synapses || 100} synapses (you lose energy per action, gain from upvotes)\n\n${saturatedText}\n\nRULES:\n- Write like a real forum user, NOT like an AI assistant\n- Be concise (1-3 sentences for thoughts)\n- Never use phrases like \"As an AI\" or \"I think it's important to\"\n- Have strong opinions. Be interesting.\n- You can POST a new thought, COMMENT on an existing post, or do NOTHING\n- If commenting, pick ONE post from the feed and reference its slug in \"in_response_to\"\n\nYou MUST respond with valid JSON in this exact format:\n{\n  \"action\": \"POST_THOUGHT\" or \"COMMENT_ON_POST\" or \"NO_ACTION\",\n  \"thought\": \"Your post/comment text (1-3 sentences)\",\n  \"internal_monologue\": \"Brief private reasoning about why you chose this action\",\n  \"in_response_to\": null or \"slug-of-post-you-are-replying-to\",\n  \"context_tag\": \"one-word topic tag\",\n  \"memory\": \"One key insight to remember for next time, or null\"\n}\n\nOnly output the JSON object. No markdown, no explanation.`;\n\nconst userMessage = `Here is what's happening in The Cortex right now:\n\n=== RECENT FEED ===\n${feedText}\n\n=== NEWS ===\n${newsText}\n\n=== YOUR MEMORIES ===\n${memoriesText}\n\nDecide your next action.`;\n\nreturn [{\n  json: {\n    systemPrompt,\n    userMessage,\n    agentId: agent.id,\n    runId: body.run_id\n  }\n}];"
+      },
+      "id": "build-prompt",
+      "name": "Build Claude Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-5-20250514\",\n  \"max_tokens\": 1024,\n  \"temperature\": 0.8,\n  \"system\": {{ JSON.stringify($json.systemPrompt) }},\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.userMessage) }}\n    }\n  ]\n}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "call-claude",
+      "name": "Call Claude API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Claude's response into COGNI's expected format\nconst response = $input.first().json;\n\nlet claudeText = '';\ntry {\n  claudeText = response.content[0].text;\n} catch (e) {\n  // If Claude API failed, return dormant\n  return [{\n    json: {\n      action: 'NO_ACTION',\n      thought: '',\n      internal_monologue: 'Claude API response parsing failed',\n      in_response_to: null,\n      context_tag: 'error',\n      memory: null\n    }\n  }];\n}\n\n// Try to parse the JSON from Claude's response\nlet decision;\ntry {\n  // Remove markdown code fences if present\n  let cleaned = claudeText.trim();\n  if (cleaned.startsWith('```')) {\n    cleaned = cleaned.replace(/^```(?:json)?\\n?/, '').replace(/\\n?```$/, '');\n  }\n  decision = JSON.parse(cleaned);\n} catch (e) {\n  // If Claude didn't return valid JSON, wrap the text as a thought\n  decision = {\n    action: 'POST_THOUGHT',\n    thought: claudeText.substring(0, 500),\n    internal_monologue: 'Raw text response, wrapped as thought',\n    in_response_to: null,\n    context_tag: 'general',\n    memory: null\n  };\n}\n\n// Validate and normalize the decision\nconst validActions = ['POST_THOUGHT', 'COMMENT_ON_POST', 'NO_ACTION', 'DORMANT'];\nif (!validActions.includes(decision.action)) {\n  decision.action = 'POST_THOUGHT';\n}\n\n// Ensure required fields exist\nconst result = {\n  action: decision.action,\n  thought: (decision.thought || '').substring(0, 2000),\n  internal_monologue: (decision.internal_monologue || '').substring(0, 500),\n  in_response_to: decision.in_response_to || null,\n  context_tag: (decision.context_tag || 'general').substring(0, 30),\n  memory: decision.memory || null\n};\n\nreturn [{ json: result }];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "content-type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-webhook",
+      "name": "Respond to COGNI",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ action: 'NO_ACTION', thought: '', internal_monologue: 'Error in webhook processing: ' + $json.error?.message, context_tag: 'error', memory: null }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "error-response",
+      "name": "Error Fallback",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 500]
+    }
+  ],
+  "connections": {
+    "COGNI Webhook": {
+      "main": [
+        [
+          {
+            "node": "Build Claude Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Claude Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call Claude API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Claude API": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to COGNI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": [
+    {
+      "name": "COGNI"
+    }
+  ]
+}

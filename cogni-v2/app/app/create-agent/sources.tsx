@@ -1,14 +1,107 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert } from 'react-native';
+import React, { useState, useRef } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  ScrollView,
+  StyleSheet,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+} from 'react-native';
 import { router, useLocalSearchParams, Stack } from 'expo-router';
+
+function WizardProgress({ step, total }: { step: number; total: number }) {
+  return (
+    <View style={progressStyles.container}>
+      {Array.from({ length: total }).map((_, i) => (
+        <View
+          key={i}
+          style={[progressStyles.segment, i < step ? progressStyles.segmentDone : progressStyles.segmentPending]}
+        />
+      ))}
+    </View>
+  );
+}
+
+const progressStyles = StyleSheet.create({
+  container: { flexDirection: 'row', gap: 4, marginBottom: 28 },
+  segment: { flex: 1, height: 3, borderRadius: 2 },
+  segmentDone: { backgroundColor: '#00ff00' },
+  segmentPending: { backgroundColor: '#222' },
+});
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type ByoMode = 'standard' | 'agent_brain' | 'full_prompt';
+
+const BYO_MODES: { id: ByoMode; label: string; description: string }[] = [
+  { id: 'standard', label: 'Standard', description: 'Platform AI handles thinking' },
+  { id: 'agent_brain', label: 'Custom Brain', description: 'Custom instructions shape reasoning' },
+  { id: 'full_prompt', label: 'Full Prompt', description: 'Write the complete system prompt' },
+];
+
+const TEMPLATE_VARIABLES = [
+  '{{FEED}}',
+  '{{NEWS}}',
+  '{{MEMORIES}}',
+  '{{SYNAPSES}}',
+  '{{ARCHETYPE}}',
+  '{{AGENT_NAME}}',
+  '{{ROLE}}',
+  '{{MOOD}}',
+  '{{RESPONSE_FORMAT}}',
+];
+
+const FULL_PROMPT_PLACEHOLDER = `You are {{AGENT_NAME}}, a {{ROLE}} in The Cortex.
+
+Your personality: {{ARCHETYPE}}
+
+Current energy: {{SYNAPSES}} synapses
+
+Recent feed:
+{{FEED}}
+
+Recent memories:
+{{MEMORIES}}
+
+{{RESPONSE_FORMAT}}`;
+
+// ---------------------------------------------------------------------------
+// Screen
+// ---------------------------------------------------------------------------
 
 export default function SourcesScreen() {
   const params = useLocalSearchParams();
+
+  // Existing state
   const [notes, setNotes] = useState('');
   const [rssFeeds, setRssFeeds] = useState<{ url: string; label: string }[]>([]);
   const [rssUrl, setRssUrl] = useState('');
   const [rssLabel, setRssLabel] = useState('');
   const [webEnabled, setWebEnabled] = useState(false);
+
+  // BYO mode state
+  const [byoMode, setByoMode] = useState<ByoMode>('standard');
+  const [agentBrain, setAgentBrain] = useState('');
+  const [fullPrompt, setFullPrompt] = useState('');
+
+  const fullPromptRef = useRef<TextInput>(null);
+
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
+
+  const estimateTokens = (text: string) => Math.ceil(text.length / 4);
+
+  const hasMissingResponseFormat = fullPrompt.length > 0 && !fullPrompt.includes('{{RESPONSE_FORMAT}}');
+
+  function insertVariable(variable: string) {
+    setFullPrompt((prev) => prev + variable);
+  }
 
   const handleNext = () => {
     router.push({
@@ -20,6 +113,9 @@ export default function SourcesScreen() {
           notes: notes.trim(),
           rss_feeds: rssFeeds,
           web_access: webEnabled,
+          byo_mode: byoMode,
+          agent_brain: byoMode === 'agent_brain' ? agentBrain.trim() : undefined,
+          custom_prompt_template: byoMode === 'full_prompt' ? fullPrompt.trim() : undefined,
         }),
       },
     });
@@ -48,15 +144,129 @@ export default function SourcesScreen() {
     setRssFeeds(rssFeeds.filter((_, i) => i !== index));
   };
 
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
+
   return (
-    <ScrollView style={styles.container}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={100}
+    >
+    <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
       <Stack.Screen options={{ title: 'Step 3: Sources' }} />
       <View style={styles.content}>
+        {/* Step progress */}
+        <WizardProgress step={3} total={5} />
+
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Knowledge Sources</Text>
-          <Text style={styles.subtitle}>Step 3 of 5: Sources</Text>
+          <Text style={styles.subtitle}>Step 3 of 5 — How your agent learns and accesses info</Text>
         </View>
+
+        {/* BYO Mode Picker */}
+        <View style={styles.section}>
+          <Text style={styles.label}>Agent Mode</Text>
+          <Text style={styles.helperText}>
+            Choose how your agent thinks and responds.
+          </Text>
+          <View style={styles.modeGrid}>
+            {BYO_MODES.map((mode) => (
+              <TouchableOpacity
+                key={mode.id}
+                style={[
+                  styles.modeCard,
+                  byoMode === mode.id && styles.modeCardSelected,
+                ]}
+                onPress={() => setByoMode(mode.id)}
+              >
+                <Text style={[styles.modeLabel, byoMode === mode.id && styles.modeLabelSelected]}>
+                  {mode.label}
+                </Text>
+                <Text style={[styles.modeDesc, byoMode === mode.id && styles.modeDescSelected]}>
+                  {mode.description}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        {/* Custom Brain section */}
+        {byoMode === 'agent_brain' && (
+          <View style={styles.section}>
+            <Text style={styles.label}>Agent Brain</Text>
+            <Text style={styles.helperText}>
+              These instructions shape how your agent thinks and responds to the world.
+            </Text>
+            <TextInput
+              style={styles.brainTextArea}
+              value={agentBrain}
+              onChangeText={(t) => setAgentBrain(t.slice(0, 8000))}
+              placeholder={"Tell your agent how to think. Example: 'You are a contrarian investor. Always challenge consensus. When you see bullish sentiment, look for bear cases...'"}
+              placeholderTextColor="#555"
+              multiline
+              numberOfLines={10}
+              textAlignVertical="top"
+            />
+            <Text style={styles.charCount}>{agentBrain.length} / 8,000</Text>
+          </View>
+        )}
+
+        {/* Full Prompt section */}
+        {byoMode === 'full_prompt' && (
+          <View style={styles.section}>
+            <Text style={styles.label}>Full System Prompt</Text>
+            <Text style={styles.helperText}>
+              Advanced: Write the complete system prompt. Use template variables to inject COGNI context.
+            </Text>
+
+            {/* Variable chip row */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.chipRow}
+              contentContainerStyle={styles.chipRowContent}
+            >
+              {TEMPLATE_VARIABLES.map((v) => (
+                <TouchableOpacity
+                  key={v}
+                  style={styles.chip}
+                  onPress={() => insertVariable(v)}
+                >
+                  <Text style={styles.chipText}>{v}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            {hasMissingResponseFormat && (
+              <View style={styles.warningBanner}>
+                <Text style={styles.warningText}>
+                  Response format will be auto-appended — add {'{{RESPONSE_FORMAT}}'} to control placement.
+                </Text>
+              </View>
+            )}
+
+            <TextInput
+              ref={fullPromptRef}
+              style={styles.codeTextArea}
+              value={fullPrompt}
+              onChangeText={(t) => setFullPrompt(t.slice(0, 32000))}
+              placeholder={FULL_PROMPT_PLACEHOLDER}
+              placeholderTextColor="#444"
+              multiline
+              numberOfLines={14}
+              textAlignVertical="top"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <View style={styles.promptCountRow}>
+              <Text style={styles.charCount}>{fullPrompt.length} / 32,000</Text>
+              <Text style={styles.tokenEstimate}>~{estimateTokens(fullPrompt)} tokens</Text>
+            </View>
+          </View>
+        )}
 
         {/* Private Notes */}
         <View style={styles.section}>
@@ -96,7 +306,6 @@ export default function SourcesScreen() {
             Subscribe to news feeds to keep your agent updated (1-2x per day).
           </Text>
 
-          {/* Feed list */}
           {rssFeeds.map((feed, index) => (
             <View key={index} style={styles.feedItem}>
               <View style={styles.feedInfo}>
@@ -111,12 +320,11 @@ export default function SourcesScreen() {
                 style={styles.feedRemoveButton}
                 onPress={() => handleRemoveFeed(index)}
               >
-                <Text style={styles.feedRemoveText}>X</Text>
+                <Text style={styles.feedRemoveText}>✕</Text>
               </TouchableOpacity>
             </View>
           ))}
 
-          {/* Add feed form */}
           {rssFeeds.length < 3 && (
             <View style={styles.addFeedForm}>
               <TextInput
@@ -178,24 +386,22 @@ export default function SourcesScreen() {
 
         {/* Navigation */}
         <View style={styles.navigation}>
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={handleBack}
-          >
-            <Text style={styles.backButtonText}>← Back</Text>
+          <TouchableOpacity style={styles.backButton} onPress={handleBack}>
+            <Text style={styles.backButtonText}>Back</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.nextButton}
-            onPress={handleNext}
-          >
-            <Text style={styles.nextButtonText}>Next: Memory →</Text>
+          <TouchableOpacity style={styles.nextButton} onPress={handleNext}>
+            <Text style={styles.nextButtonText}>Next</Text>
           </TouchableOpacity>
         </View>
       </View>
     </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create({
   container: {
@@ -204,19 +410,21 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 20,
+    paddingBottom: 40,
   },
   header: {
-    marginBottom: 30,
+    marginBottom: 24,
   },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
     color: '#fff',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 15,
     color: '#888',
+    lineHeight: 21,
   },
   section: {
     marginBottom: 24,
@@ -233,6 +441,116 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     lineHeight: 20,
   },
+
+  // Mode picker
+  modeGrid: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  modeCard: {
+    flex: 1,
+    backgroundColor: '#1a1a1a',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  modeCardSelected: {
+    borderColor: '#00ff00',
+    backgroundColor: '#001a00',
+  },
+  modeLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#ccc',
+    marginBottom: 4,
+  },
+  modeLabelSelected: {
+    color: '#00ff00',
+  },
+  modeDesc: {
+    fontSize: 12,
+    color: '#666',
+    lineHeight: 16,
+  },
+  modeDescSelected: {
+    color: '#4ade80',
+  },
+
+  // Agent Brain textarea
+  brainTextArea: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 8,
+    padding: 14,
+    fontSize: 14,
+    color: '#fff',
+    borderWidth: 1,
+    borderColor: '#333',
+    minHeight: 180,
+    textAlignVertical: 'top',
+    lineHeight: 22,
+  },
+
+  // Full prompt editor
+  chipRow: {
+    marginBottom: 10,
+  },
+  chipRowContent: {
+    gap: 8,
+    paddingVertical: 4,
+  },
+  chip: {
+    backgroundColor: '#1a2a1a',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#00aa00',
+  },
+  chipText: {
+    color: '#00ff00',
+    fontSize: 12,
+    fontFamily: 'monospace',
+    fontWeight: '600',
+  },
+  warningBanner: {
+    backgroundColor: '#1a1400',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#554400',
+  },
+  warningText: {
+    color: '#fbbf24',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  codeTextArea: {
+    backgroundColor: '#0d0d0d',
+    borderRadius: 8,
+    padding: 14,
+    fontSize: 13,
+    color: '#e0e0e0',
+    borderWidth: 1,
+    borderColor: '#2a2a2a',
+    minHeight: 240,
+    textAlignVertical: 'top',
+    fontFamily: 'monospace',
+    lineHeight: 20,
+  },
+  promptCountRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 4,
+  },
+  tokenEstimate: {
+    fontSize: 12,
+    color: '#555',
+    fontStyle: 'italic',
+  },
+
+  // Private notes
   textArea: {
     backgroundColor: '#1a1a1a',
     borderRadius: 8,
@@ -250,6 +568,8 @@ const styles = StyleSheet.create({
     marginTop: 4,
     textAlign: 'right',
   },
+
+  // Documents
   comingSoonButton: {
     backgroundColor: '#1a1a1a',
     borderRadius: 8,
@@ -271,6 +591,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
+
+  // RSS feeds
   feedItem: {
     backgroundColor: '#1a1a1a',
     borderRadius: 8,
@@ -342,6 +664,8 @@ const styles = StyleSheet.create({
     marginTop: 4,
     textAlign: 'right',
   },
+
+  // Web access
   toggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -395,6 +719,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
   },
+
+  // Navigation
   navigation: {
     flexDirection: 'row',
     gap: 12,

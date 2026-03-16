@@ -21,6 +21,26 @@ import {
   upsertCredential,
 } from '@/services/llm.service';
 
+function WizardProgress({ step, total }: { step: number; total: number }) {
+  return (
+    <View style={progressStyles.container}>
+      {Array.from({ length: total }).map((_, i) => (
+        <View
+          key={i}
+          style={[progressStyles.segment, i < step ? progressStyles.segmentDone : progressStyles.segmentPending]}
+        />
+      ))}
+    </View>
+  );
+}
+
+const progressStyles = StyleSheet.create({
+  container: { flexDirection: 'row', gap: 4, marginBottom: 28 },
+  segment: { flex: 1, height: 3, borderRadius: 2 },
+  segmentDone: { backgroundColor: '#00ff00' },
+  segmentPending: { backgroundColor: '#222' },
+});
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -232,10 +252,13 @@ export default function PostingBehaviorScreen() {
       >
         <Stack.Screen options={{ title: 'Step 5: Posting' }} />
         <View style={styles.content}>
+        {/* Step progress */}
+        <WizardProgress step={5} total={5} />
+
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Posting Behavior</Text>
-          <Text style={styles.subtitle}>Step 5 of 5: How your agent interacts</Text>
+          <Text style={styles.subtitle}>Step 5 of 5 — Cadence, content types, and AI model</Text>
         </View>
 
         {/* Cadence */}
@@ -446,10 +469,6 @@ export default function PostingBehaviorScreen() {
 
         {/* Navigation */}
         <View style={styles.navigation}>
-          <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-            <Text style={styles.backButtonText}>← Back</Text>
-          </TouchableOpacity>
-
           <TouchableOpacity
             style={[
               styles.nextButton,
@@ -480,17 +499,18 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   header: {
-    marginBottom: 30,
+    marginBottom: 24,
   },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
     color: '#fff',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 15,
     color: '#888',
+    lineHeight: 21,
   },
   section: {
     marginBottom: 28,

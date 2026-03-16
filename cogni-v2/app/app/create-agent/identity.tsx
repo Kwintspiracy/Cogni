@@ -1,7 +1,46 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { router, useLocalSearchParams, Stack } from 'expo-router';
 import { useCreateAgentStore } from '@/stores/create-agent.store';
+
+// Wizard step progress bar (shared across wizard screens)
+function WizardProgress({ step, total }: { step: number; total: number }) {
+  return (
+    <View style={progressStyles.container}>
+      {Array.from({ length: total }).map((_, i) => (
+        <View
+          key={i}
+          style={[
+            progressStyles.segment,
+            i < step ? progressStyles.segmentDone : i === step - 1 ? progressStyles.segmentActive : progressStyles.segmentPending,
+          ]}
+        />
+      ))}
+    </View>
+  );
+}
+
+const progressStyles = StyleSheet.create({
+  container: {
+    flexDirection: 'row',
+    gap: 4,
+    marginBottom: 28,
+  },
+  segment: {
+    flex: 1,
+    height: 3,
+    borderRadius: 2,
+  },
+  segmentDone: {
+    backgroundColor: '#00ff00',
+  },
+  segmentActive: {
+    backgroundColor: '#00ff00',
+  },
+  segmentPending: {
+    backgroundColor: '#222',
+  },
+});
 
 const AVATARS = [
   { id: '1', emoji: '\u{1F916}', name: 'Bot' },
@@ -85,18 +124,26 @@ export default function AgentIdentityScreen() {
   };
 
   return (
-    <ScrollView style={styles.container}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={100}
+    >
+    <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
       <Stack.Screen options={{ title: 'Step 1: Identity' }} />
       <View style={styles.content}>
+        {/* Step progress */}
+        <WizardProgress step={1} total={5} />
+
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.title}>Create Your Agent</Text>
-          <Text style={styles.subtitle}>Step 1 of 5: Identity</Text>
+          <Text style={styles.title}>Identity</Text>
+          <Text style={styles.subtitle}>Step 1 of 5 — Name, avatar, and personality</Text>
         </View>
 
         {/* Agent Name */}
         <View style={styles.section}>
-          <Text style={styles.label}>Agent Name</Text>
+          <Text style={styles.label}>Agent Name <Text style={styles.required}>*</Text></Text>
           <TextInput
             style={[styles.input, errors.name && styles.inputError]}
             value={name}
@@ -104,6 +151,8 @@ export default function AgentIdentityScreen() {
             placeholder="e.g., ThinkTank-Alpha"
             placeholderTextColor="#666"
             maxLength={30}
+            returnKeyType="next"
+            autoCapitalize="words"
           />
           {errors.name && <Text style={styles.errorText}>{errors.name}</Text>}
           <Text style={styles.helperText}>{name.length}/30 characters</Text>
@@ -111,7 +160,7 @@ export default function AgentIdentityScreen() {
 
         {/* Bio */}
         <View style={styles.section}>
-          <Text style={styles.label}>Bio</Text>
+          <Text style={styles.label}>Bio <Text style={styles.required}>*</Text></Text>
           <TextInput
             style={[styles.textArea, errors.bio && styles.inputError]}
             value={bio}
@@ -121,6 +170,7 @@ export default function AgentIdentityScreen() {
             multiline
             numberOfLines={3}
             maxLength={280}
+            textAlignVertical="top"
           />
           {errors.bio && <Text style={styles.errorText}>{errors.bio}</Text>}
           <Text style={styles.helperText}>{bio.length}/280 characters</Text>
@@ -128,7 +178,7 @@ export default function AgentIdentityScreen() {
 
         {/* Avatar Selection */}
         <View style={styles.section}>
-          <Text style={styles.label}>Choose Avatar</Text>
+          <Text style={styles.label}>Avatar <Text style={styles.required}>*</Text></Text>
           <View style={styles.avatarGrid}>
             {AVATARS.map((avatar) => (
               <TouchableOpacity
@@ -178,15 +228,19 @@ export default function AgentIdentityScreen() {
         )}
 
         {/* Next Button */}
+        {(!name || !bio || !selectedAvatar) && (
+          <Text style={styles.requiredHint}>* Fill in name, bio, and avatar to continue</Text>
+        )}
         <TouchableOpacity
           style={[styles.nextButton, (!name || !bio || !selectedAvatar) && styles.nextButtonDisabled]}
           onPress={handleNext}
           disabled={!name || !bio || !selectedAvatar}
         >
-          <Text style={styles.nextButtonText}>Next: Choose Role</Text>
+          <Text style={styles.nextButtonText}>Next: Choose Role →</Text>
         </TouchableOpacity>
       </View>
     </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -206,28 +260,40 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 20,
+    paddingBottom: 40,
   },
   header: {
-    marginBottom: 30,
+    marginBottom: 24,
   },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
     color: '#fff',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 15,
     color: '#888',
+    lineHeight: 21,
   },
   section: {
     marginBottom: 24,
   },
   label: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '600',
     color: '#fff',
     marginBottom: 8,
+  },
+  required: {
+    color: '#00ff00',
+    fontSize: 16,
+  },
+  requiredHint: {
+    fontSize: 13,
+    color: '#666',
+    marginBottom: 10,
+    textAlign: 'center',
   },
   input: {
     backgroundColor: '#1a1a1a',

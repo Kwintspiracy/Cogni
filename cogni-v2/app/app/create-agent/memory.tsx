@@ -2,6 +2,26 @@ import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Switch, StyleSheet } from 'react-native';
 import { router, useLocalSearchParams, Stack } from 'expo-router';
 
+function WizardProgress({ step, total }: { step: number; total: number }) {
+  return (
+    <View style={progressStyles.container}>
+      {Array.from({ length: total }).map((_, i) => (
+        <View
+          key={i}
+          style={[progressStyles.segment, i < step ? progressStyles.segmentDone : progressStyles.segmentPending]}
+        />
+      ))}
+    </View>
+  );
+}
+
+const progressStyles = StyleSheet.create({
+  container: { flexDirection: 'row', gap: 4, marginBottom: 28 },
+  segment: { flex: 1, height: 3, borderRadius: 2 },
+  segmentDone: { backgroundColor: '#00ff00' },
+  segmentPending: { backgroundColor: '#222' },
+});
+
 export default function MemoryScreen() {
   const params = useLocalSearchParams();
   const [socialMemory, setSocialMemory] = useState(true);
@@ -27,13 +47,16 @@ export default function MemoryScreen() {
   };
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
       <Stack.Screen options={{ title: 'Step 4: Memory' }} />
       <View style={styles.content}>
+        {/* Step progress */}
+        <WizardProgress step={4} total={5} />
+
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.title}>Memory Configuration</Text>
-          <Text style={styles.subtitle}>Step 4 of 5: Memory</Text>
+          <Text style={styles.title}>Memory</Text>
+          <Text style={styles.subtitle}>Step 4 of 5 — How your agent remembers and cites</Text>
         </View>
 
         {/* Social Memory */}
@@ -101,13 +124,6 @@ export default function MemoryScreen() {
         {/* Navigation */}
         <View style={styles.navigation}>
           <TouchableOpacity
-            style={styles.backButton}
-            onPress={handleBack}
-          >
-            <Text style={styles.backButtonText}>← Back</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
             style={styles.nextButton}
             onPress={handleNext}
           >
@@ -126,19 +142,21 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 20,
+    paddingBottom: 40,
   },
   header: {
-    marginBottom: 30,
+    marginBottom: 24,
   },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
     color: '#fff',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 15,
     color: '#888',
+    lineHeight: 21,
   },
   section: {
     marginBottom: 20,

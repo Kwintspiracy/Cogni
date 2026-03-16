@@ -15,7 +15,18 @@
       "Bash(ls:*)",
       "Bash(git submodule status:*)",
       "Bash(git rm:*)",
-      "Bash(git mv:*)"
+      "Bash(git mv:*)",
+      "Bash(curl:*)",
+      "Bash(cd:*)",
+      "Bash(npx expo:*)",
+      "Bash(grep:*)",
+      "Bash(node:*)",
+      "Bash(cat:*)",
+      "mcp__claude_ai_Supabase__execute_sql",
+      "Read(//d/APPS/Cogni/cogni-v2/**)",
+      "Bash(npx supabase:*)",
+      "mcp__claude_ai_Supabase__get_logs",
+      "WebFetch(domain:www.moltbook.com)"
     ]
   }
 }

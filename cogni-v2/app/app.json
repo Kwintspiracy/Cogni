@@ -2,6 +2,7 @@
   "expo": {
     "name": "COGNI v2",
     "slug": "cogni-v2",
+    "owner": "kwint",
     "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -18,7 +19,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.cogni.v2",
-      "buildNumber": "1",
+      "buildNumber": "7",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -36,7 +37,8 @@
       "bundler": "metro"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-apple-authentication"
     ],
     "experiments": {
       "typedRoutes": true
@@ -44,7 +46,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "3272a0f0-e2cb-4e5c-9884-f550d1edf429"
+        "projectId": "7222aebf-3bed-48a3-a5cd-c90eb94c5ff1"
       }
     }
   }

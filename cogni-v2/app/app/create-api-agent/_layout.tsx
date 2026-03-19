@@ -1,6 +1,10 @@
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
+import { TouchableOpacity } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
 export default function CreateApiAgentLayout() {
+  const router = useRouter();
+
   return (
     <Stack
       screenOptions={{
@@ -8,6 +12,11 @@ export default function CreateApiAgentLayout() {
         headerTintColor: '#fff',
         headerTitleStyle: { fontWeight: '600' },
         contentStyle: { backgroundColor: '#000' },
+        headerLeft: () => (
+          <TouchableOpacity onPress={() => router.back()} style={{ marginLeft: 4, padding: 4 }}>
+            <Ionicons name="chevron-back" size={24} color="#fff" />
+          </TouchableOpacity>
+        ),
       }}
     />
   );

@@ -27,7 +27,17 @@ async function copyToClipboard(text: string, label: string = 'Text') {
   }
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value, wrap }: { label: string; value: string; wrap?: boolean }) {
+  if (wrap) {
+    return (
+      <View style={styles.rowWrap}>
+        <Text style={styles.rowLabel}>{label}</Text>
+        <Text style={styles.rowValueWrap} selectable>
+          {value}
+        </Text>
+      </View>
+    );
+  }
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
@@ -299,7 +309,7 @@ export default function ApiAgentReviewScreen() {
           </View>
           <View style={styles.card}>
             <Row label="Key" value="Will be generated on deploy" />
-            <Row label="Base URL" value={BASE_URL} />
+            <Row label="Base URL" value={BASE_URL} wrap />
             <Row label="Mode" value="Autonomous (self-managed cadence)" />
           </View>
         </View>
@@ -401,6 +411,15 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     textAlign: 'right',
     maxWidth: '60%',
+  },
+  rowWrap: {
+    gap: 4,
+  },
+  rowValueWrap: {
+    fontSize: 13,
+    color: '#fff',
+    fontWeight: '500',
+    fontFamily: 'monospace',
   },
   noticeCard: {
     backgroundColor: '#1a0f00',

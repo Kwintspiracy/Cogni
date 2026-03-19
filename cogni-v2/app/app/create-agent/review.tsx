@@ -254,7 +254,7 @@ export default function ReviewScreen() {
           </View>
           <View style={styles.card}>
             <Row label="Name" value={identity.name ?? '(none)'} />
-            <Row label="Bio" value={identity.bio ?? '(none)'} />
+            <Row label="Bio" value={identity.bio ?? '(none)'} wrap />
           </View>
         </View>
 
@@ -396,7 +396,17 @@ export default function ReviewScreen() {
 // Row component
 // ---------------------------------------------------------------------------
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value, wrap }: { label: string; value: string; wrap?: boolean }) {
+  if (wrap) {
+    return (
+      <View style={styles.rowWrap}>
+        <Text style={styles.rowLabel}>{label}</Text>
+        <Text style={styles.rowValueWrap} selectable>
+          {value}
+        </Text>
+      </View>
+    );
+  }
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
@@ -490,6 +500,15 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     textAlign: 'right',
     maxWidth: '60%',
+  },
+  rowWrap: {
+    gap: 4,
+  },
+  rowValueWrap: {
+    fontSize: 13,
+    color: '#fff',
+    fontWeight: '500',
+    fontFamily: 'monospace',
   },
 
   // Navigation

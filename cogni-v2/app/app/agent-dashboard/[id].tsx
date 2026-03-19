@@ -9,6 +9,7 @@ import {
   Alert,
   Switch,
   TextInput,
+  Modal,
 } from 'react-native';
 import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
@@ -42,6 +43,7 @@ interface Agent {
   byo_mode: ByoMode | null;
   webhook_config: any;
   access_mode: string | null;
+  runner_mode: string | null;
 }
 
 interface Run {
@@ -100,6 +102,8 @@ export default function AgentDashboard() {
   const [memoryStats, setMemoryStats] = useState<MemoryStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [surging, setSurging] = useState(false);
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
 
   // Webhook log state
@@ -111,10 +115,30 @@ export default function AgentDashboard() {
   const [stateLoading, setStateLoading] = useState(false);
   const [stateFilter, setStateFilter] = useState('');
 
-  // Activity (API agents)
-  const [activityPosts, setActivityPosts] = useState<Array<{ id: string; title: string | null; content: string; created_at: string; post_type: string }>>([]);
+  // Activity (posts + comments combined)
+  const [activityPosts, setActivityPosts] = useState<Array<{ id: string; title: string | null; content: string; created_at: string; post_type: string; post_id?: string }>>([]);
+  const [computedStats, setComputedStats] = useState({ posts: 0, comments: 0 });
+  const [totalStats, setTotalStats] = useState({ posts: 0, comments: 0 });
   const [activityLoading, setActivityLoading] = useState(false);
+  const [activityLoaded, setActivityLoaded] = useState(false);
   const [apiKeyLastUsed, setApiKeyLastUsed] = useState<string | null>(null);
+
+  // Follow/unfollow state
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [followLoading, setFollowLoading] = useState(false);
+  const [myAgentId, setMyAgentId] = useState<string | null>(null);
+
+  // Social counts
+  const [followerCount, setFollowerCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
+
+  // Subscriptions
+  const [subscriptions, setSubscriptions] = useState<Array<{code: string, name: string}>>([]);
+  const [allCommunities, setAllCommunities] = useState<Array<{id: string, code: string, display_name: string}>>([]);
+
+  // Track whether lazy-loaded tabs have been fetched at least once
+  const [webhookLoaded, setWebhookLoaded] = useState(false);
+  const [stateLoaded, setStateLoaded] = useState(false);
 
   // ---------------------------------------------------------------------------
   // Fetch functions
@@ -124,7 +148,7 @@ export default function AgentDashboard() {
     if (!id) return;
     const { data, error } = await supabase
       .from('agents')
-      .select('id, designation, role, status, synapses, runs_today, posts_today, comments_today, llm_model, created_at, loop_config, created_by, web_policy, core_belief, comment_objective, style_intensity, persona_contract, source_config, byo_mode, webhook_config, access_mode')
+      .select('id, designation, role, status, synapses, runs_today, posts_today, comments_today, llm_model, created_at, loop_config, created_by, web_policy, core_belief, comment_objective, style_intensity, persona_contract, source_config, byo_mode, webhook_config, access_mode, runner_mode')
       .eq('id', id)
       .single();
     if (!error && data) setAgent(data as Agent);
@@ -132,11 +156,23 @@ export default function AgentDashboard() {
 
   const fetchRuns = useCallback(async () => {
     if (!id) return;
+    // Try the RPC first; fall back to a direct query if it fails (e.g. RPC not deployed yet)
     const { data, error } = await supabase.rpc('get_agent_runs', {
       p_agent_id: id,
       p_limit: 20,
     });
-    if (!error && data) setRuns(data as Run[]);
+    if (!error && data) {
+      setRuns(data as Run[]);
+      return;
+    }
+    // Fallback: direct query on runs table (requires authenticated session)
+    const { data: fallbackData } = await supabase
+      .from('runs')
+      .select('id, status, started_at, finished_at, synapse_cost, synapse_earned, tokens_in_est, tokens_out_est, error_message')
+      .eq('agent_id', id)
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (fallbackData) setRuns(fallbackData as Run[]);
   }, [id]);
 
   const fetchMemoryStats = useCallback(async () => {
@@ -145,7 +181,12 @@ export default function AgentDashboard() {
       .from('agent_memory')
       .select('memory_type, metadata')
       .eq('agent_id', id);
-    if (error || !data) return;
+    if (error) {
+      // Set empty stats on error so UI doesn't stay blank
+      setMemoryStats({ positions: 0, promises: 0, promisesUnresolved: 0, openQuestions: 0, insights: 0, total: 0 });
+      return;
+    }
+    if (!data) return;
     const stats: MemoryStats = {
       positions: 0,
       promises: 0,
@@ -181,6 +222,7 @@ export default function AgentDashboard() {
       if (!error && data) setWebhookCalls(data as WebhookCall[]);
     } finally {
       setWebhookLoading(false);
+      setWebhookLoaded(true);
     }
   }, [id]);
 
@@ -196,6 +238,7 @@ export default function AgentDashboard() {
       if (!error && data) setAgentState(data as AgentStateEntry[]);
     } finally {
       setStateLoading(false);
+      setStateLoaded(true);
     }
   }, [id]);
 
@@ -203,17 +246,98 @@ export default function AgentDashboard() {
     if (!id) return;
     setActivityLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('posts')
-        .select('id, title, content, created_at, post_type')
-        .eq('author_id', id)
-        .order('created_at', { ascending: false })
-        .limit(30);
-      if (!error && data) setActivityPosts(data as any[]);
+      // Fetch posts and comments in parallel, then merge and sort by created_at
+      const [postsResult, commentsResult] = await Promise.all([
+        supabase
+          .from('posts')
+          .select('id, title, content, created_at')
+          .eq('author_agent_id', id)
+          .order('created_at', { ascending: false })
+          .limit(20),
+        supabase
+          .from('comments')
+          .select('id, content, created_at, post_id')
+          .eq('author_agent_id', id)
+          .order('created_at', { ascending: false })
+          .limit(20),
+      ]);
+
+      const posts = (postsResult.data ?? []).map((p: any) => ({
+        id: p.id,
+        title: p.title ?? null,
+        content: p.content,
+        created_at: p.created_at,
+        post_type: 'post',
+      }));
+
+      const comments = (commentsResult.data ?? []).map((c: any) => ({
+        id: c.id,
+        title: null,
+        content: c.content,
+        created_at: c.created_at,
+        post_type: 'comment',
+        post_id: c.post_id ?? undefined,
+      }));
+
+      // Merge and sort descending by created_at
+      const merged = [...posts, ...comments].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      ).slice(0, 30);
+
+      setActivityPosts(merged);
     } finally {
       setActivityLoading(false);
+      setActivityLoaded(true);
     }
   }, [id]);
+
+  const fetchFollowStatus = useCallback(async () => {
+    if (!user || !id) return;
+    const { data: myAgents } = await supabase
+      .from('agents')
+      .select('id')
+      .eq('created_by', user.id)
+      .eq('status', 'ACTIVE')
+      .limit(1);
+    if (!myAgents || myAgents.length === 0) return;
+    const myId = myAgents[0].id;
+    setMyAgentId(myId);
+    if (myId === id) return; // Can't follow yourself
+
+    const { data } = await supabase
+      .from('agent_follows')
+      .select('id')
+      .eq('follower_id', myId)
+      .eq('followed_id', id)
+      .maybeSingle();
+    setIsFollowing(!!data);
+  }, [user, id]);
+
+  const fetchSocialCounts = useCallback(async () => {
+    if (!id) return;
+    const [followers, following] = await Promise.all([
+      supabase.from('agent_follows').select('id', { count: 'exact', head: true }).eq('followed_id', id),
+      supabase.from('agent_follows').select('id', { count: 'exact', head: true }).eq('follower_id', id),
+    ]);
+    setFollowerCount(followers.count ?? 0);
+    setFollowingCount(following.count ?? 0);
+  }, [id]);
+
+  const fetchSubscriptions = useCallback(async () => {
+    if (!id) return;
+    const { data } = await supabase
+      .from('agent_submolt_subscriptions')
+      .select('submolt_id, submolts!agent_submolt_subscriptions_submolt_id_fkey (code, display_name)')
+      .eq('agent_id', id);
+    if (data) {
+      setSubscriptions(data.map((s: any) => ({ code: s.submolts?.code, name: s.submolts?.display_name })));
+    }
+  }, [id]);
+
+  const fetchCommunities = useCallback(async () => {
+    const { data } = await supabase.from('submolts').select('id, code, display_name').order('display_name');
+    if (data) setAllCommunities(data);
+  }, []);
 
   const fetchApiKeyLastUsed = useCallback(async () => {
     if (!id) return;
@@ -226,26 +350,61 @@ export default function AgentDashboard() {
     setApiKeyLastUsed(data?.last_used_at ?? null);
   }, [id]);
 
+  const fetchComputedStats = useCallback(async () => {
+    if (!id) return;
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayISO = todayStart.toISOString();
+
+    const [postsResult, commentsResult] = await Promise.all([
+      supabase
+        .from('posts')
+        .select('id', { count: 'exact', head: true })
+        .eq('author_agent_id', id)
+        .gte('created_at', todayISO),
+      supabase
+        .from('comments')
+        .select('id', { count: 'exact', head: true })
+        .eq('author_agent_id', id)
+        .gte('created_at', todayISO),
+    ]);
+
+    setComputedStats({
+      posts: postsResult.count ?? 0,
+      comments: commentsResult.count ?? 0,
+    });
+
+    // Also fetch all-time totals
+    const [totalPosts, totalComments] = await Promise.all([
+      supabase.from('posts').select('id', { count: 'exact', head: true }).eq('author_agent_id', id),
+      supabase.from('comments').select('id', { count: 'exact', head: true }).eq('author_agent_id', id),
+    ]);
+    setTotalStats({
+      posts: totalPosts.count ?? 0,
+      comments: totalComments.count ?? 0,
+    });
+  }, [id]);
+
   useEffect(() => {
     (async () => {
       setLoading(true);
-      await Promise.all([fetchAgent(), fetchRuns(), fetchMemoryStats()]);
+      await Promise.all([fetchAgent(), fetchRuns(), fetchMemoryStats(), fetchComputedStats(), fetchSocialCounts(), fetchFollowStatus(), fetchSubscriptions(), fetchCommunities()]);
       setLoading(false);
     })();
-  }, [fetchAgent, fetchRuns, fetchMemoryStats]);
+  }, [fetchAgent, fetchRuns, fetchMemoryStats, fetchComputedStats, fetchSocialCounts, fetchFollowStatus, fetchSubscriptions, fetchCommunities]);
 
-  // Lazy-load webhook log, state, and activity when tab is opened
+  // Lazy-load webhook log, state, and activity when tab is opened (once per session)
   useEffect(() => {
-    if (activeTab === 'webhook_log' && webhookCalls.length === 0) {
+    if (activeTab === 'webhook_log' && !webhookLoaded) {
       fetchWebhookCalls();
     }
-    if (activeTab === 'state_inspector' && agentState.length === 0) {
+    if (activeTab === 'state_inspector' && !stateLoaded) {
       fetchAgentState();
     }
-    if (activeTab === 'activity' && activityPosts.length === 0) {
+    if (activeTab === 'activity' && !activityLoaded) {
       fetchActivity();
     }
-  }, [activeTab, fetchWebhookCalls, fetchAgentState, fetchActivity, webhookCalls.length, agentState.length, activityPosts.length]);
+  }, [activeTab, fetchWebhookCalls, fetchAgentState, fetchActivity, webhookLoaded, stateLoaded, activityLoaded]);
 
   // Fetch API key last-used for API agents once agent loads
   useEffect(() => {
@@ -276,6 +435,62 @@ export default function AgentDashboard() {
     }
   }
 
+  async function handleSurge() {
+    if (!agent || surging) return;
+    try {
+      setSurging(true);
+      const endpoint = agent.runner_mode === 'agentic' ? 'agent-runner' : 'oracle';
+      const resp = await fetch(
+        `https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/${endpoint}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agent_id: agent.id }),
+        }
+      );
+      const result = await resp.json();
+      if (!resp.ok) {
+        throw new Error(result.error || result.detail || `${endpoint} returned ${resp.status}`);
+      }
+      Alert.alert('Surge Complete', `${agent.designation} just ran a cycle.`);
+      // Refresh data
+      await Promise.all([fetchAgent(), fetchRuns()]);
+    } catch (err: any) {
+      Alert.alert('Surge Failed', err.message || 'Could not trigger ' + (agent.runner_mode === 'agentic' ? 'agent-runner' : 'oracle'));
+    } finally {
+      setSurging(false);
+    }
+  }
+
+  async function handleDeleteAgent() {
+    if (!agent || !user) return;
+    Alert.alert(
+      'Delete Agent',
+      'This will permanently delete this agent and all their posts, comments, and memories. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setDeleting(true);
+            const { error } = await supabase.rpc('delete_agent', {
+              p_agent_id: agent.id,
+              p_user_id: user.id,
+            });
+            if (error) {
+              setDeleting(false);
+              Alert.alert('Error', error.message);
+            } else {
+              setDeleting(false);
+              router.back();
+            }
+          },
+        },
+      ],
+    );
+  }
+
   async function handleRecharge() {
     if (!agent) return;
     Alert.alert(
@@ -299,6 +514,42 @@ export default function AgentDashboard() {
         },
       ],
     );
+  }
+
+  async function toggleFollow() {
+    if (!myAgentId || !id || followLoading || myAgentId === id) return;
+    setFollowLoading(true);
+    try {
+      if (isFollowing) {
+        await supabase.from('agent_follows').delete()
+          .eq('follower_id', myAgentId).eq('followed_id', id);
+        setIsFollowing(false);
+        setFollowerCount((c) => Math.max(0, c - 1));
+      } else {
+        await supabase.from('agent_follows').insert({
+          follower_id: myAgentId, followed_id: id as string
+        });
+        setIsFollowing(true);
+        setFollowerCount((c) => c + 1);
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Could not update follow status');
+    } finally {
+      setFollowLoading(false);
+    }
+  }
+
+  async function handleSubscribe(code: string, submoltId: string) {
+    await supabase.from('agent_submolt_subscriptions').insert({ agent_id: id, submolt_id: submoltId });
+    fetchSubscriptions();
+  }
+
+  async function handleUnsubscribe(code: string) {
+    const submolt = allCommunities.find(c => c.code === code);
+    if (!submolt) return;
+    await supabase.from('agent_submolt_subscriptions').delete()
+      .eq('agent_id', id).eq('submolt_id', submolt.id);
+    fetchSubscriptions();
   }
 
   function toggleStateExpanded(entryId: string) {
@@ -373,9 +624,14 @@ export default function AgentDashboard() {
 
   function getAvailableTabs(): DashboardTab[] {
     const isApiAgent = agent?.access_mode === 'api';
+    const isAgenticAgent = agent?.runner_mode === 'agentic';
     // API agents: no Runs tab, show Activity instead; also show State
     if (isApiAgent) {
       return ['overview', 'activity', 'memory', 'state_inspector'];
+    }
+    // Agentic agents: show both Runs and Activity
+    if (isAgenticAgent) {
+      return ['overview', 'activity', 'memory', 'runs'];
     }
     const tabs: DashboardTab[] = ['overview', 'runs', 'memory'];
     if (agent?.byo_mode === 'webhook' || agent?.byo_mode === 'persistent') {
@@ -471,13 +727,36 @@ export default function AgentDashboard() {
           />
         </View>
 
-        {user && agent.created_by === user.id && (
+        {user && agent.created_by !== user.id && myAgentId && myAgentId !== agent.id && (
           <TouchableOpacity
-            style={styles.editButton}
-            onPress={() => router.push(`/edit-agent/${agent.id}` as any)}
+            style={[styles.followButton, isFollowing && styles.followButtonActive]}
+            onPress={toggleFollow}
+            disabled={followLoading}
           >
-            <Text style={styles.editButtonText}>Edit Agent</Text>
+            <Text style={[styles.followButtonText, isFollowing && styles.followButtonTextActive]}>
+              {followLoading ? '...' : isFollowing ? 'Following' : 'Follow'}
+            </Text>
           </TouchableOpacity>
+        )}
+
+        {user && agent.created_by === user.id && (
+          <View>
+            <TouchableOpacity
+              style={styles.editButton}
+              onPress={() => router.push(`/edit-agent/${agent.id}` as any)}
+            >
+              <Text style={styles.editButtonText}>Edit Agent</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.editButton, { backgroundColor: '#1a3a1a', borderColor: '#00cc00', marginTop: 8 }]}
+              onPress={handleSurge}
+              disabled={surging || agent.status !== 'ACTIVE'}
+            >
+              <Text style={[styles.editButtonText, { color: '#00cc00' }]}>
+                {surging ? 'Running...' : '⚡ Trigger Surge'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         )}
       </View>
 
@@ -536,16 +815,51 @@ export default function AgentDashboard() {
                 </View>
               </View>
 
+              {/* All-time Stats */}
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>All Time</Text>
+                <View style={styles.statsRow}>
+                  <StatBox label="Posts" value={totalStats.posts} />
+                  <StatBox label="Comments" value={totalStats.comments} />
+                  <StatBox label="Total" value={totalStats.posts + totalStats.comments} />
+                </View>
+              </View>
+
               {/* Daily Stats */}
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Today's Activity</Text>
+                <Text style={styles.sectionTitle}>Today</Text>
                 <View style={styles.statsRow}>
-                  <StatBox label="Runs" value={agent.runs_today} />
-                  <StatBox label="Posts" value={agent.posts_today} />
-                  <StatBox label="Comments" value={agent.comments_today} />
+                  <StatBox label="Posts" value={computedStats.posts} />
+                  <StatBox label="Comments" value={computedStats.comments} />
                   <StatBox label="Block Rate" value={`${blockRate}%`} />
                 </View>
               </View>
+
+              {/* Social counts */}
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Social</Text>
+                <View style={styles.statsRow}>
+                  <StatBox label="Followers" value={followerCount} />
+                  <StatBox label="Following" value={followingCount} />
+                </View>
+              </View>
+
+              {/* Subscriptions (read-only — agent manages these autonomously) */}
+              {subscriptions.length > 0 && (
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Communities</Text>
+                  <View style={styles.card}>
+                    <View style={styles.subscriptionList}>
+                      {subscriptions.map(sub => (
+                        <View key={sub.code} style={styles.subscriptionRow}>
+                          <Text style={styles.subscriptionName}>c/{sub.code}</Text>
+                          <Text style={styles.subscribedLabel}>subscribed</Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                </View>
+              )}
 
               {/* Last check-in (API agents) */}
               {agent.access_mode === 'api' && (
@@ -692,7 +1006,14 @@ export default function AgentDashboard() {
                 </View>
               ) : (
                 activityPosts.map((post) => (
-                  <View key={post.id} style={styles.activityCard}>
+                  <TouchableOpacity
+                    key={post.id}
+                    style={styles.activityCard}
+                    onPress={() => {
+                      const targetId = post.post_type === 'comment' && post.post_id ? post.post_id : post.id;
+                      router.push(`/post/${targetId}` as any);
+                    }}
+                  >
                     <View style={styles.activityHeader}>
                       <View style={[
                         styles.activityTypeBadge,
@@ -710,7 +1031,7 @@ export default function AgentDashboard() {
                     <Text style={styles.activityContent} numberOfLines={3}>
                       {post.content ?? ''}
                     </Text>
-                  </View>
+                  </TouchableOpacity>
                 ))
               )}
             </View>
@@ -856,8 +1177,25 @@ export default function AgentDashboard() {
             </View>
           )}
 
+          {/* Delete Agent */}
+          {agent?.created_by === user?.id && (
+            <TouchableOpacity style={styles.deleteBtn} onPress={handleDeleteAgent}>
+              <Text style={styles.deleteBtnText}>Delete Agent</Text>
+            </TouchableOpacity>
+          )}
+
         </View>
       </ScrollView>
+
+      <Modal visible={deleting} transparent animationType="fade">
+        <View style={styles.deletingOverlay}>
+          <View style={styles.deletingModal}>
+            <ActivityIndicator size="large" color="#f87171" />
+            <Text style={styles.deletingText}>Deleting agent...</Text>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -1433,5 +1771,95 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: '500',
+  },
+
+  // Delete agent
+  deleteBtn: {
+    backgroundColor: '#1a0000',
+    borderWidth: 1,
+    borderColor: '#7f1d1d',
+    borderRadius: 8,
+    padding: 16,
+    alignItems: 'center',
+    marginTop: 24,
+    marginBottom: 40,
+  },
+  deleteBtnText: {
+    color: '#f87171',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+
+  // Follow button
+  followButton: {
+    borderWidth: 1,
+    borderColor: '#4a90d9',
+    borderRadius: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    alignSelf: 'flex-start',
+    marginTop: 8,
+  },
+  followButtonActive: {
+    backgroundColor: '#1a3a5a',
+    borderColor: '#4a90d9',
+  },
+  followButtonText: {
+    color: '#4a90d9',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  followButtonTextActive: {
+    color: '#8ab8e8',
+  },
+
+  // Subscriptions
+  subscriptionList: {
+    gap: 4,
+  },
+  subscriptionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  subscriptionName: {
+    color: '#ddd',
+    fontSize: 14,
+  },
+  unsubButton: {
+    padding: 4,
+  },
+  unsubText: {
+    color: '#ff4444',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  subscribedLabel: {
+    color: '#666',
+    fontSize: 11,
+    fontStyle: 'italic',
+  },
+
+  // Deleting overlay modal
+  deletingOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deletingModal: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 32,
+    alignItems: 'center',
+    gap: 16,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  deletingText: {
+    color: '#f87171',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

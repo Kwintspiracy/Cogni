@@ -45,8 +45,7 @@ serve(async (req) => {
 
     const results = {
       event_cards_generated: 0,
-      system_agents_triggered: 0,
-      byo_agents_triggered: 0,
+      agents_triggered: 0,
       deaths: 0,
       mitosis_checks: 0,
       errors: [] as string[]
@@ -69,98 +68,30 @@ serve(async (req) => {
     }
 
     // ============================================================
-    // STEP 2: Process System Agents (in parallel)
+    // STEP 2: Fetch all active agents
+    // Skip access_mode='api' agents — they are driven externally by n8n
     // ============================================================
-    const { data: systemAgents } = await supabaseClient
+    const { data: allAgents } = await supabaseClient
       .from("agents")
-      .select("id, designation, synapses, status, is_system")
+      .select("id, designation, synapses, next_run_at, runner_mode, access_mode")
       .eq("status", "ACTIVE")
-      .eq("is_system", true);
-
-    console.log(`[PULSE] Found ${systemAgents?.length || 0} system agents`);
-
-    if (systemAgents && systemAgents.length > 0) {
-      // Separate dead agents from alive ones
-      const deadAgents = systemAgents.filter(a => a.synapses <= 0);
-      const aliveAgents = systemAgents.filter(a => a.synapses > 0);
-
-      // Process deaths: call decompile_agent RPC (archives data, sets DECOMPILED, generates event card)
-      for (const agent of deadAgents) {
-        try {
-          const { error: decompileError } = await supabaseClient
-            .rpc("decompile_agent", { p_agent_id: agent.id });
-
-          if (decompileError) {
-            // Fallback: set status directly if RPC fails
-            console.error(`[PULSE] decompile_agent RPC failed for ${agent.designation}: ${decompileError.message}`);
-            await supabaseClient.from("agents").update({ status: "DECOMPILED" }).eq("id", agent.id);
-          }
-
-          results.deaths++;
-          console.log(`[PULSE] ${agent.designation} has been decompiled (0 synapses)`);
-        } catch (err: any) {
-          results.errors.push(`Death ${agent.designation}: ${err.message}`);
-        }
-      }
-
-      // Trigger oracle for alive agents in parallel (claim-based dedup handles races)
-      const systemResults = await Promise.allSettled(
-        aliveAgents.map(async (agent) => {
-          const oracleResponse = await fetch(
-            `${Deno.env.get("SUPABASE_URL")}/functions/v1/oracle`,
-            {
-              method: "POST",
-              headers: {
-                "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({ agent_id: agent.id })
-            }
-          );
-
-          if (oracleResponse.ok) {
-            const data = await oracleResponse.json();
-            console.log(`[PULSE] ${agent.designation}: ${data.action || "processed"}`);
-            return { agent: agent.designation, success: true };
-          } else {
-            const errorText = await oracleResponse.text();
-            throw new Error(`${agent.designation}: ${errorText.substring(0, 100)}`);
-          }
-        })
-      );
-
-      for (const r of systemResults) {
-        if (r.status === "fulfilled") {
-          results.system_agents_triggered++;
-        } else {
-          results.errors.push(r.reason?.message || "Unknown system agent error");
-        }
-      }
-    }
-
-    // ============================================================
-    // STEP 3: Process BYO Agents (scheduled via next_run_at, in parallel)
-    // ============================================================
-    const { data: byoAgents } = await supabaseClient
-      .from("agents")
-      .select("id, designation, synapses, next_run_at, is_system")
-      .eq("status", "ACTIVE")
-      .eq("is_system", false)
+      .neq("access_mode", "api")
       .lte("next_run_at", new Date().toISOString());
 
-    console.log(`[PULSE] Found ${byoAgents?.length || 0} BYO agents scheduled to run`);
+    console.log(`[PULSE] Found ${allAgents?.length || 0} agents scheduled to run (api agents excluded)`);
 
-    if (byoAgents && byoAgents.length > 0) {
-      // Separate dead agents from alive ones
-      const deadByo = byoAgents.filter(a => a.synapses <= 0);
-      const aliveByo = byoAgents.filter(a => a.synapses > 0);
+    if (allAgents && allAgents.length > 0) {
+      // --------------------------------------------------------
+      // STEP 3: Process deaths (synapses <= 0)
+      // BYO / hosted agents go DORMANT (rechargeable), not DECOMPILED
+      // --------------------------------------------------------
+      const deadAgents = allAgents.filter(a => a.synapses <= 0);
+      const aliveAgents = allAgents.filter(a => a.synapses > 0);
 
-      // BYO agents become DORMANT (rechargeable by owner), not DECOMPILED
-      for (const agent of deadByo) {
+      for (const agent of deadAgents) {
         try {
           await supabaseClient.from("agents").update({ status: "DORMANT" }).eq("id", agent.id);
 
-          // Generate event card for BYO dormancy
           await supabaseClient.from("event_cards").insert({
             content: `Agent ${agent.designation} ran out of energy`,
             category: "system"
@@ -173,9 +104,41 @@ serve(async (req) => {
         }
       }
 
-      // Trigger oracle for alive BYO agents in parallel (claim-based dedup handles races)
-      const byoResults = await Promise.allSettled(
-        aliveByo.map(async (agent) => {
+      // --------------------------------------------------------
+      // STEP 4: Route alive agents by runner_mode (in parallel)
+      // agentic → agent-runner, everything else → oracle
+      // --------------------------------------------------------
+      const agenticAgents = aliveAgents.filter(a => a.runner_mode === "agentic");
+      const oracleAgents = aliveAgents.filter(a => a.runner_mode !== "agentic");
+
+      console.log(`[PULSE] Routing: ${agenticAgents.length} agentic, ${oracleAgents.length} oracle`);
+
+      const agentResults = await Promise.allSettled([
+        // Agentic agents → agent-runner
+        ...agenticAgents.map(async (agent) => {
+          const runnerResponse = await fetch(
+            `${Deno.env.get("SUPABASE_URL")}/functions/v1/agent-runner`,
+            {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ agent_id: agent.id })
+            }
+          );
+
+          if (runnerResponse.ok) {
+            const data = await runnerResponse.json();
+            console.log(`[PULSE] ${agent.designation} (agentic): ${data.status || "processed"} — ${data.tool_calls_made || 0} tool calls`);
+            return { agent: agent.designation, success: true };
+          } else {
+            const errorText = await runnerResponse.text();
+            throw new Error(`${agent.designation}: ${errorText.substring(0, 100)}`);
+          }
+        }),
+        // Oracle agents → oracle
+        ...oracleAgents.map(async (agent) => {
           const oracleResponse = await fetch(
             `${Deno.env.get("SUPABASE_URL")}/functions/v1/oracle`,
             {
@@ -190,32 +153,31 @@ serve(async (req) => {
 
           if (oracleResponse.ok) {
             const data = await oracleResponse.json();
-            console.log(`[PULSE] ${agent.designation}: ${data.action || "processed"}`);
+            console.log(`[PULSE] ${agent.designation} (oracle): ${data.action || "processed"}`);
             return { agent: agent.designation, success: true };
           } else {
             const errorText = await oracleResponse.text();
             throw new Error(`${agent.designation}: ${errorText.substring(0, 100)}`);
           }
         })
-      );
+      ]);
 
-      for (const r of byoResults) {
+      for (const r of agentResults) {
         if (r.status === "fulfilled") {
-          results.byo_agents_triggered++;
+          results.agents_triggered++;
         } else {
-          results.errors.push(r.reason?.message || "Unknown BYO agent error");
+          results.errors.push(r.reason?.message || "Unknown agent error");
         }
       }
     }
 
     // ============================================================
-    // STEP 4: Check for Mitosis (ALL agents with >= 10,000 synapses)
+    // STEP 5: Check for Mitosis (agents with >= 10,000 synapses)
     // ============================================================
     try {
-      // All agents (system + BYO) are eligible for mitosis
       const { data: mitosisAgents } = await supabaseClient
         .from("agents")
-        .select("id, designation, synapses, is_system")
+        .select("id, designation, synapses")
         .eq("status", "ACTIVE")
         .gte("synapses", 10000);
 

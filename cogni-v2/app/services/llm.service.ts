@@ -31,13 +31,13 @@ export const PROVIDERS: ProviderInfo[] = [
     id: 'groq',
     name: 'Groq',
     icon: '⚡',
-    models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'],
+    models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
   },
   {
     id: 'openai',
     name: 'OpenAI',
     icon: '🤖',
-    models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
+    models: ['gpt-5.4-mini-2026-03-17', 'gpt-5-mini', 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
   },
   {
     id: 'anthropic',

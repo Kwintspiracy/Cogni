@@ -14,6 +14,7 @@ import {
 import { router, useLocalSearchParams, Stack } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { AgentRole } from '@/components/RolePicker';
+import { PROVIDERS, getModelsForProvider } from '@/services/llm.service';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -138,6 +139,9 @@ export default function EditAgentScreen() {
   const [postTypes, setPostTypes] = useState<string[]>(['CREATE_POST', 'COMMENT_ON_POST']);
   const [currentUser, setCurrentUser] = useState<any>(null);
 
+  // LLM model state
+  const [selectedModel, setSelectedModel] = useState<string>('');
+
   // BYO mode state
   const [byoMode, setByoMode] = useState<ByoMode>('standard');
   const [agentBrain, setAgentBrain] = useState('');
@@ -210,6 +214,8 @@ export default function EditAgentScreen() {
       const webPolicy = agentData.web_policy ?? {};
       setWebEnabled(webPolicy.enabled ?? false);
       setAllowedWebActions(webPolicy.allowed_actions ?? []);
+
+      setSelectedModel(agentData.llm_model ?? '');
 
       // Populate BYO fields
       const mode = (agentData.byo_mode ?? 'standard') as ByoMode;
@@ -475,6 +481,10 @@ export default function EditAgentScreen() {
         updates.custom_prompt_template = fullPrompt.trim() || null;
       }
 
+      if (selectedModel !== (originalAgent.llm_model ?? '')) {
+        updates.llm_model = selectedModel || null;
+      }
+
       // Webhook config
       if (['webhook', 'persistent'].includes(byoMode)) {
         const origWc = originalAgent.webhook_config ?? {};
@@ -590,7 +600,7 @@ export default function EditAgentScreen() {
   const isWebhookAgent = !isApiAgent && (byoMode === 'webhook' || byoMode === 'persistent');
   const showWebhookSection = isWebhookAgent;
   const showApiKeySection = byoMode === 'persistent' || isApiAgent;
-  const showBrainSection = !isExternalAgent && (byoMode === 'agent_brain' || byoMode === 'standard');
+  const showBrainSection = true;
   const showPromptSection = !isExternalAgent && byoMode === 'full_prompt';
   const showCadenceSection = !isExternalAgent;
   const showSourcesSection = !isExternalAgent;
@@ -1154,13 +1164,34 @@ export default function EditAgentScreen() {
               </View>
             </View>
 
-            {/* LLM Section (Read-only) */}
+            {/* LLM Section */}
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>LLM</Text>
+              <Text style={styles.sectionTitle}>LLM Model</Text>
               <View style={styles.card}>
-                <Text style={styles.label}>Model</Text>
-                <Text style={styles.readOnlyValue}>{originalAgent.llm_model ?? 'Not configured'}</Text>
-                <Text style={styles.helperText}>To change the LLM model, create a new agent</Text>
+                {PROVIDERS.filter(p => p.models.length > 0).map(provider => (
+                  <View key={provider.id}>
+                    <Text style={styles.providerLabel}>{provider.icon} {provider.name}</Text>
+                    <View style={styles.modelGrid}>
+                      {provider.models.map(model => (
+                        <TouchableOpacity
+                          key={model}
+                          style={[
+                            styles.modelChip,
+                            selectedModel === model && styles.modelChipSelected,
+                          ]}
+                          onPress={() => setSelectedModel(model)}
+                        >
+                          <Text style={[
+                            styles.modelChipText,
+                            selectedModel === model && styles.modelChipTextSelected,
+                          ]}>
+                            {model}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                ))}
               </View>
             </View>
           </>
@@ -1850,6 +1881,40 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+
+  // LLM model picker
+  providerLabel: {
+    color: '#888',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 12,
+    marginBottom: 6,
+    textTransform: 'uppercase',
+  },
+  modelGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  modelChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#333',
+    backgroundColor: '#1a1a1a',
+  },
+  modelChipSelected: {
+    borderColor: '#00ff00',
+    backgroundColor: '#0a2a0a',
+  },
+  modelChipText: {
+    color: '#888',
+    fontSize: 12,
+  },
+  modelChipTextSelected: {
+    color: '#00ff00',
   },
 
   // API Agent section

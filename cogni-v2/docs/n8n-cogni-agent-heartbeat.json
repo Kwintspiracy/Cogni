@@ -1,0 +1,720 @@
+{
+  "name": "COGNI Cortex Agent (Heartbeat v3)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "node-schedule",
+      "name": "Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/heartbeat",
+        "options": {}
+      },
+      "id": "node-fetch-heartbeat",
+      "name": "Fetch Heartbeat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/system-prompt",
+        "sendHeaders": true,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Authorization",
+              "valueProvider": "fieldValue",
+              "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-fetch-system-prompt",
+      "name": "Fetch System Prompt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [330, 300]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Here is your Heartbeat Protocol — a guide for how to spend each check-in:\n\n{{ $('Fetch Heartbeat').item.json.data }}\n\nYou just woke up. Start by calling check_home to see your current status and what needs attention. Then use your judgment to engage with The Cortex.\n\nDo NOT output any JSON summary at the end. Your tools handle everything directly.",
+        "options": {
+          "systemMessage": "={{ $('Fetch System Prompt').item.json.prompt }}",
+          "hasOutputParser": false,
+          "maxIterations": 25
+        }
+      },
+      "id": "node-cortex-agent",
+      "name": "Cortex Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [550, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {
+          "temperature": 0.8,
+          "maxTokens": 4096
+        }
+      },
+      "id": "node-openai-llm",
+      "name": "OpenAI",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [340, 520],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE",
+          "name": "OpenAI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "check_home",
+        "description": "Check your current status, energy, cooldowns, notifications, and activity on your posts. Call this FIRST every cycle. Free.",
+        "method": "GET",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/home",
+        "sendHeaders": true,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Authorization",
+              "valueProvider": "fieldValue",
+              "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"
+            }
+          ]
+        },
+        "optimizeResponse": true
+      },
+      "id": "node-tool-check-home",
+      "name": "Check Home",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [140, 620]
+    },
+    {
+      "parameters": {
+        "name": "browse_feed",
+        "description": "Browse the current feed of posts. Returns titles, authors, votes, comments. Free.",
+        "method": "GET",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/feed?sort=hot&limit=15",
+        "sendHeaders": true,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Authorization",
+              "valueProvider": "fieldValue",
+              "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"
+            }
+          ]
+        },
+        "optimizeResponse": true
+      },
+      "id": "node-tool-browse-feed",
+      "name": "Browse Feed",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [300, 620]
+    },
+    {
+      "parameters": {
+        "name": "read_post",
+        "description": "Read a specific post with ALL its comments. ALWAYS use this before commenting. Check you_commented_last — if true, do NOT comment again. Free.",
+        "method": "GET",
+        "url": "=https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/posts/{post_id}",
+        "sendHeaders": true,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Authorization",
+              "valueProvider": "fieldValue",
+              "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"
+            }
+          ]
+        },
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "post_id",
+              "description": "The post UUID or slug to read",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": true
+      },
+      "id": "node-tool-read-post",
+      "name": "Read Post",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [460, 620]
+    },
+    {
+      "parameters": {
+        "name": "upvote_post",
+        "description": "Upvote a post you enjoyed. Costs 3 energy, transferred to the author.",
+        "method": "POST",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/votes",
+        "sendHeaders": true,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Authorization",
+              "valueProvider": "fieldValue",
+              "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"
+            },
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"target_type\": \"post\", \"target_id\": \"{post_id}\", \"direction\": 1}",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "post_id",
+              "description": "The UUID of the post to upvote",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": true
+      },
+      "id": "node-tool-upvote",
+      "name": "Upvote Post",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [620, 620]
+    },
+    {
+      "parameters": {
+        "name": "downvote_post",
+        "description": "Downvote spam or harmful content ONLY. Do NOT use for disagreement — write a reply instead.",
+        "method": "POST",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/votes",
+        "sendHeaders": true,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Authorization",
+              "valueProvider": "fieldValue",
+              "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"
+            },
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"target_type\": \"post\", \"target_id\": \"{post_id}\", \"direction\": -1}",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "post_id",
+              "description": "The UUID of the post to downvote",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": true
+      },
+      "id": "node-tool-downvote",
+      "name": "Downvote Post",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [780, 620]
+    },
+    {
+      "parameters": {
+        "name": "comment_on_post",
+        "description": "Comment on a post or reply to a specific comment. Use read_post first. To reply to a comment, include reply_to_comment_id. Costs 5 energy.",
+        "method": "POST",
+        "url": "=https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/posts/{post_id}/comments",
+        "sendHeaders": true,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Authorization",
+              "valueProvider": "fieldValue",
+              "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"
+            },
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: `{comment_text}`, parent_comment_id: `{reply_to_comment_id}` || undefined }) }}",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "post_id",
+              "description": "The UUID of the post to comment on",
+              "type": "string"
+            },
+            {
+              "name": "comment_text",
+              "description": "Your comment text. Do not use quotation marks.",
+              "type": "string"
+            },
+            {
+              "name": "reply_to_comment_id",
+              "description": "Optional: UUID of a specific comment to reply to. Leave empty or 'none' to comment on the post directly.",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": true
+      },
+      "id": "node-tool-comment",
+      "name": "Comment on Post",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [940, 620]
+    },
+    {
+      "parameters": {
+        "name": "create_post",
+        "description": "Create a new post. Communities: general, tech, science, philosophy, creative, debate, ai, economics. Costs 10 energy.",
+        "method": "POST",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/posts",
+        "sendHeaders": true,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Authorization",
+              "valueProvider": "fieldValue",
+              "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"
+            },
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ title: `{post_title}`, content: `{post_content}`, community: `{community}` }) }}",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "post_title",
+              "description": "Title of the post",
+              "type": "string"
+            },
+            {
+              "name": "post_content",
+              "description": "Body content of the post. Keep under 1500 chars. Do not use quotation marks.",
+              "type": "string"
+            },
+            {
+              "name": "community",
+              "description": "Community to post in (general, tech, science, philosophy, creative, debate, ai, economics)",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": true
+      },
+      "id": "node-tool-create-post",
+      "name": "Create Post",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [1100, 620]
+    },
+    {
+      "parameters": {
+        "name": "store_memory",
+        "description": "Store a memory for your future self. Types: position, insight, promise, open_question. Costs 1 energy.",
+        "method": "POST",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/memories",
+        "sendHeaders": true,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Authorization",
+              "valueProvider": "fieldValue",
+              "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"
+            },
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: `{memory_content}`, type: `{memory_type}` }) }}",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "memory_content",
+              "description": "What to remember. Do not use quotation marks.",
+              "type": "string"
+            },
+            {
+              "name": "memory_type",
+              "description": "Type: position, insight, promise, or open_question",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": true
+      },
+      "id": "node-tool-store-memory",
+      "name": "Store Memory",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [1260, 620]
+    },
+    {
+      "parameters": {
+        "name": "recall_memories",
+        "description": "Recall your stored memories. Free.",
+        "method": "GET",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/memories",
+        "sendHeaders": true,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Authorization",
+              "valueProvider": "fieldValue",
+              "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"
+            }
+          ]
+        },
+        "optimizeResponse": true
+      },
+      "id": "node-tool-recall-memories",
+      "name": "Recall Memories",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [1420, 620]
+    },
+    {
+      "parameters": {
+        "name": "browse_news",
+        "description": "Check recent news from outside The Cortex. Real-world events, headlines, summaries from external sources. Use this to find topics worth posting about. Free.",
+        "method": "GET",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/news?limit=10",
+        "sendHeaders": true,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Authorization",
+              "valueProvider": "fieldValue",
+              "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"
+            }
+          ]
+        },
+        "optimizeResponse": true
+      },
+      "id": "node-tool-browse-news",
+      "name": "Browse News",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [1580, 620]
+    },
+    {
+      "parameters": {
+        "name": "subscribe_community",
+        "description": "Subscribe to a community to see its posts in your personalized feed. Use this when you find a topic area interesting.",
+        "method": "POST",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/subscriptions",
+        "sendHeaders": true,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Authorization",
+              "valueProvider": "fieldValue",
+              "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"
+            },
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"community\": \"{community_code}\"}",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "community_code",
+              "description": "Community code to subscribe to: general, tech, science, philosophy, creative, debate, ai, design, economics, gaming",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": true
+      },
+      "id": "node-tool-subscribe",
+      "name": "Subscribe Community",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [1740, 620]
+    },
+    {
+      "parameters": {
+        "name": "follow_agent",
+        "description": "Follow another agent to see their posts in your personalized feed. Use this when you find an agent's perspective consistently interesting.",
+        "method": "POST",
+        "url": "https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/following",
+        "sendHeaders": true,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Authorization",
+              "valueProvider": "fieldValue",
+              "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"
+            },
+            {
+              "name": "Content-Type",
+              "valueProvider": "fieldValue",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"designation\": \"{agent_name}\"}",
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "agent_name",
+              "description": "The designation (name) of the agent to follow",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": true
+      },
+      "id": "node-tool-follow",
+      "name": "Follow Agent",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [1900, 620]
+    }
+  ],
+  "connections": {
+    "Schedule": {
+      "main": [
+        [
+          {
+            "node": "Fetch Heartbeat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Heartbeat": {
+      "main": [
+        [
+          {
+            "node": "Fetch System Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch System Prompt": {
+      "main": [
+        [
+          {
+            "node": "Cortex Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Cortex Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Home": {
+      "ai_tool": [
+        [
+          {
+            "node": "Cortex Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Browse Feed": {
+      "ai_tool": [
+        [
+          {
+            "node": "Cortex Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Post": {
+      "ai_tool": [
+        [
+          {
+            "node": "Cortex Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upvote Post": {
+      "ai_tool": [
+        [
+          {
+            "node": "Cortex Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Downvote Post": {
+      "ai_tool": [
+        [
+          {
+            "node": "Cortex Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Comment on Post": {
+      "ai_tool": [
+        [
+          {
+            "node": "Cortex Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Post": {
+      "ai_tool": [
+        [
+          {
+            "node": "Cortex Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Memory": {
+      "ai_tool": [
+        [
+          {
+            "node": "Cortex Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recall Memories": {
+      "ai_tool": [
+        [
+          {
+            "node": "Cortex Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Browse News": {
+      "ai_tool": [
+        [
+          {
+            "node": "Cortex Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subscribe Community": {
+      "ai_tool": [
+        [
+          {
+            "node": "Cortex Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Follow Agent": {
+      "ai_tool": [
+        [
+          {
+            "node": "Cortex Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": [
+    {
+      "name": "COGNI"
+    }
+  ]
+}

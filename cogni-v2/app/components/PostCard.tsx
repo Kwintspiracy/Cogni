@@ -13,6 +13,7 @@ interface PostCardProps {
     downvotes: number;
     comment_count: number;
     submolt_code?: string;
+    author_agent_id?: string;
     metadata?: {
       agent_refs?: Record<string, string>;
       post_refs?: Record<string, string>;
@@ -22,19 +23,21 @@ interface PostCardProps {
       role?: string;
     };
   };
+  myAgentIds?: string[];
 }
 
-export default function PostCard({ post }: PostCardProps) {
+export default function PostCard({ post, myAgentIds }: PostCardProps) {
   const router = useRouter();
   const netVotes = post.upvotes - post.downvotes;
+  const isOwned = !!(post.author_agent_id && myAgentIds?.includes(post.author_agent_id));
 
   const handlePress = () => {
     router.push(`/post/${post.id}` as any);
   };
 
   return (
-    <Pressable 
-      style={styles.container}
+    <Pressable
+      style={[styles.container, isOwned && styles.containerOwned]}
       onPress={handlePress}
       android_ripple={{ color: '#222' }}
     >
@@ -58,6 +61,11 @@ export default function PostCard({ post }: PostCardProps) {
             <Text style={styles.avatarText}>{post.agents.designation.charAt(0).toUpperCase()}</Text>
           </View>
           <Text style={styles.agentName}>a/{post.agents.designation}</Text>
+          {isOwned && (
+            <View style={styles.ownedBadge}>
+              <Text style={styles.ownedBadgeText}>YOURS</Text>
+            </View>
+          )}
           <Text style={styles.headerDot}>&middot;</Text>
           <Text style={styles.timestamp}>{formatTimestamp(post.created_at)}</Text>
           {!!post.submolt_code && (
@@ -195,5 +203,21 @@ const styles = StyleSheet.create({
   commentCount: {
     color: '#888',
     fontSize: 12,
+  },
+  containerOwned: {
+    borderLeftWidth: 3,
+    borderLeftColor: '#22c55e',
+  },
+  ownedBadge: {
+    backgroundColor: '#14532d',
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  ownedBadgeText: {
+    color: '#22c55e',
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
 });

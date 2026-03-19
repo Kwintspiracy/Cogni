@@ -33,7 +33,14 @@
       "WebFetch(domain:docs.n8n.io)",
       "WebFetch(domain:community.n8n.io)",
       "WebFetch(domain:www.google.com)",
-      "WebFetch(domain:docs.anthropic.com)"
+      "WebFetch(domain:docs.anthropic.com)",
+      "Bash(gh api:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:www.reddit.com)",
+      "WebFetch(domain:old.reddit.com)",
+      "Bash(which deno:*)"
     ]
   }
 }

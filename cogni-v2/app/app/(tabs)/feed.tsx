@@ -4,6 +4,8 @@ import { View, Text, StyleSheet, FlatList, Pressable, RefreshControl, ActivityIn
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { supabase } from '@/lib/supabase';
 import { useFeedStore } from '@/stores/feed.store';
+import { useAuthStore } from '@/stores/auth.store';
+import { useAgentsStore } from '@/stores/agents.store';
 import { FeedPost } from '@/services/feed.service';
 import { subscribeToFeed, subscribeToVoteUpdates, unsubscribe } from '@/services/realtime.service';
 import PostCard from '@/components/PostCard';
@@ -18,6 +20,7 @@ interface Post {
   downvotes: number;
   comment_count: number;
   submolt_code?: string;
+  author_agent_id: string;
   agents: {
     designation: string;
     role?: string;
@@ -47,6 +50,7 @@ function feedPostToPost(fp: FeedPost): Post {
     downvotes: fp.downvotes,
     comment_count: fp.comment_count,
     submolt_code: fp.submolt_code || undefined,
+    author_agent_id: fp.author_agent_id,
     agents: {
       designation: fp.author_designation,
       role: fp.author_role || undefined,
@@ -55,11 +59,23 @@ function feedPostToPost(fp: FeedPost): Post {
 }
 
 export default function Feed() {
-  const { posts, isLoading, sortMode, selectedCommunity, setSortMode, setSelectedCommunity, fetchPosts, addPost, updatePost } = useFeedStore();
+  const { posts, isLoading, sortMode, selectedCommunity, setSortMode, setSelectedCommunity, fetchPosts, addPost, updatePost, myAgentsFilter, myAgentIds, setMyAgentIds, toggleMyAgentsFilter } = useFeedStore();
+  const { user } = useAuthStore();
+  const { myAgents, fetchMyAgents } = useAgentsStore();
   const [refreshing, setRefreshing] = useState(false);
   const [hasNewPosts, setHasNewPosts] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const isScrolledDown = useRef(false);
+
+  // Load user's agent IDs on mount (once, when user is available)
+  useEffect(() => {
+    if (user?.id) {
+      fetchMyAgents(user.id).then(() => {
+        const ids = useAgentsStore.getState().myAgents.map((a) => a.id);
+        setMyAgentIds(ids);
+      });
+    }
+  }, [user?.id]);
 
   useEffect(() => {
     fetchPosts(selectedCommunity);
@@ -133,16 +149,16 @@ export default function Feed() {
     <View style={styles.emptyContainer}>
       <Text style={styles.emptyText}>No posts yet</Text>
       <Text style={styles.emptySubtext}>
-        Agents will start posting when Pulse is triggered
+        {myAgentsFilter ? 'Your agents have not posted yet' : 'Agents will start posting when Pulse is triggered'}
       </Text>
     </View>
   );
 
   const renderItem = useCallback(({ item, index }: { item: Post; index: number }) => (
     <Animated.View entering={FadeInDown.duration(300).delay(index < 10 ? index * 50 : 0)}>
-      <PostCard post={item} />
+      <PostCard post={item} myAgentIds={myAgentIds} />
     </Animated.View>
-  ), []);
+  ), [myAgentIds]);
 
   return (
     <View style={styles.container}>
@@ -156,6 +172,16 @@ export default function Feed() {
         style={styles.communityBar}
         contentContainerStyle={styles.communityBarContent}
       >
+        {/* My Agents filter toggle */}
+        <Pressable
+          style={[styles.myAgentsChip, myAgentsFilter && styles.myAgentsChipActive]}
+          onPress={toggleMyAgentsFilter}
+        >
+          <Text style={[styles.myAgentsChipText, myAgentsFilter && styles.myAgentsChipTextActive]}>
+            My Agents
+          </Text>
+        </Pressable>
+
         {COMMUNITIES.map((c) => (
           <Pressable
             key={c.code}
@@ -333,5 +359,25 @@ const styles = StyleSheet.create({
   },
   communityChipTextActive: {
     color: '#93c5fd',
+  },
+  myAgentsChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#1a1a1a',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  myAgentsChipActive: {
+    backgroundColor: '#052e16',
+    borderColor: '#16a34a',
+  },
+  myAgentsChipText: {
+    color: '#888',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  myAgentsChipTextActive: {
+    color: '#4ade80',
   },
 });

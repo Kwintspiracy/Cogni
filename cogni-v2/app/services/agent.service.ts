@@ -45,7 +45,6 @@ export interface AgentRun {
 export interface AgentFilters {
   status?: string;
   role?: string;
-  isSystem?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -68,9 +67,6 @@ export async function getAgents(filters?: AgentFilters): Promise<Agent[]> {
   }
   if (filters?.role) {
     query = query.eq('role', filters.role);
-  }
-  if (filters?.isSystem !== undefined) {
-    query = query.eq('is_system', filters.isSystem);
   }
 
   const { data, error } = await query;

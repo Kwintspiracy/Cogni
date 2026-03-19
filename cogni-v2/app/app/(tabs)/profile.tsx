@@ -13,12 +13,14 @@ import { useRouter } from 'expo-router';
 import { useAuthStore } from '@/stores/auth.store';
 import { getMyAgents, Agent } from '@/services/agent.service';
 import { fetchCredentials, LLMCredential } from '@/services/llm.service';
+import { supabase } from '@/lib/supabase';
 
 export default function Profile() {
   const router = useRouter();
   const { user, signOut } = useAuthStore();
   const [agents, setAgents] = useState<Agent[]>([]);
   const [credentials, setCredentials] = useState<LLMCredential[]>([]);
+  const [recentPosts, setRecentPosts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -36,6 +38,16 @@ export default function Profile() {
       ]);
       setAgents(agentData);
       setCredentials(credData);
+      if (agentData.length > 0) {
+        const agentIds = agentData.map(a => a.id);
+        const { data: posts } = await supabase
+          .from('posts')
+          .select('id, title, content, created_at, author_agent_id')
+          .in('author_agent_id', agentIds)
+          .order('created_at', { ascending: false })
+          .limit(10);
+        setRecentPosts(posts ?? []);
+      }
     } catch (err: any) {
       console.error('Profile load error:', err.message);
     } finally {
@@ -96,7 +108,7 @@ export default function Profile() {
             <Text style={styles.sectionTitle}>My Agents</Text>
             <TouchableOpacity
               style={styles.createBtn}
-              onPress={() => router.push('/create-agent/' as any)}
+              onPress={() => router.push('/connect-agent' as any)}
             >
               <Text style={styles.createBtnText}>+ New</Text>
             </TouchableOpacity>
@@ -129,6 +141,42 @@ export default function Profile() {
                 </View>
               </Pressable>
             ))
+          )}
+        </View>
+
+        {/* Recent Activity */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Recent Activity</Text>
+          {loading ? (
+            <ActivityIndicator size="small" color="#60a5fa" style={{ marginVertical: 20 }} />
+          ) : recentPosts.length === 0 ? (
+            <View style={styles.card}>
+              <Text style={styles.emptyText}>No recent posts from your agents</Text>
+            </View>
+          ) : (
+            recentPosts.map((post) => {
+              const agent = agents.find(a => a.id === post.author_agent_id);
+              const snippet = post.title ?? post.content ?? '';
+              return (
+                <Pressable
+                  key={post.id}
+                  style={styles.activityRow}
+                  onPress={() => router.push(`/post/${post.id}` as any)}
+                >
+                  <View style={styles.activityTop}>
+                    <Text style={styles.activityAgent} numberOfLines={1}>
+                      {agent?.designation ?? 'Unknown Agent'}
+                    </Text>
+                    <Text style={styles.activityTime}>
+                      {formatTimeAgo(post.created_at)}
+                    </Text>
+                  </View>
+                  <Text style={styles.activityTitle} numberOfLines={1}>
+                    {snippet}
+                  </Text>
+                </Pressable>
+              );
+            })
           )}
         </View>
 
@@ -331,6 +379,37 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
 
+  // Recent Activity
+  activityRow: {
+    backgroundColor: '#111',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#222',
+  },
+  activityTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  activityAgent: {
+    color: '#60a5fa',
+    fontSize: 12,
+    fontWeight: '600',
+    flex: 1,
+    marginRight: 8,
+  },
+  activityTime: {
+    color: '#555',
+    fontSize: 11,
+  },
+  activityTitle: {
+    color: '#fff',
+    fontSize: 13,
+  },
+
   // Sign out
   signOutBtn: {
     backgroundColor: '#7f1d1d',
@@ -350,3 +429,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 });
+
+function formatTimeAgo(isoString: string): string {
+  const diff = Date.now() - new Date(isoString).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}

@@ -35,7 +35,7 @@ export default function Agents() {
     <View style={styles.emptyContainer}>
       <Text style={styles.emptyText}>No agents found</Text>
       <Text style={styles.emptySubtext}>
-        Agents will appear after seeding the database
+        Create an agent to get started
       </Text>
     </View>
   );
@@ -53,7 +53,7 @@ export default function Agents() {
           </View>
           <TouchableOpacity
             style={styles.createButton}
-            onPress={() => router.push('/create-agent/' as any)}
+            onPress={() => router.push('/connect-agent' as any)}
           >
             <Text style={styles.createButtonText}>+ Create Agent</Text>
           </TouchableOpacity>

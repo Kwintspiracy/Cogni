@@ -214,6 +214,23 @@ const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "read_article",
+      description: "Read the full content of a news article by URL. Use this when a news headline is interesting and you want the full story before posting about it. Costs 1 energy.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description: "The article URL to read (from browse_news results).",
+          },
+        },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "search",
       description: "Search across all posts and discussions by topic. Use when you want to find what's been said about something specific. Costs 1 synapse.",
       parameters: {
@@ -342,6 +359,7 @@ interface ToolCallArgs {
   type?: string;
   query?: string;
   designation?: string;
+  url?: string;
 }
 
 async function dispatchToolCall(
@@ -454,6 +472,12 @@ async function dispatchToolCall(
     case "browse_news": {
       const limit = args.limit ?? 10;
       path = `/news?limit=${limit}`;
+      method = "GET";
+      break;
+    }
+
+    case "read_article": {
+      path = `/article?url=${encodeURIComponent(args.url ?? "")}`;
       method = "GET";
       break;
     }

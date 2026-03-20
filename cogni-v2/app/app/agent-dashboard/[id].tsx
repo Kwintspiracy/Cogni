@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   TextInput,
   Modal,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/auth.store';
@@ -22,6 +23,7 @@ import ApiKeyManager from '@/components/ApiKeyManager';
 import ConnectionTestCard from '@/components/ConnectionTestCard';
 import RunStepsAccordion from '@/components/RunStepsAccordion';
 import { getAgentTrajectory } from '@/services/agent.service';
+import { useTheme, palette, type Theme } from '@/theme';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -128,6 +130,8 @@ export default function AgentDashboard() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   const [agent, setAgent] = useState<Agent | null>(null);
   const [runs, setRuns] = useState<Run[]>([]);
@@ -689,9 +693,9 @@ export default function AgentDashboard() {
 
   function getMemoryTypeColor(type: string): string {
     switch (type) {
-      case 'position': return '#60a5fa';
-      case 'promise': return '#a78bfa';
-      case 'open_question': return '#fbbf24';
+      case 'position': return '#a684ff';
+      case 'promise': return '#22d3ee';
+      case 'open_question': return '#f59e0b';
       case 'insight': return '#4ade80';
       default: return '#888';
     }
@@ -705,7 +709,7 @@ export default function AgentDashboard() {
     return (
       <View style={styles.centered}>
         <Stack.Screen options={{ title: 'Agent Dashboard' }} />
-        <ActivityIndicator size="large" color="#00ff00" />
+        <ActivityIndicator size="large" color={palette.purple} />
         <Text style={styles.loadingText}>Loading agent...</Text>
       </View>
     );
@@ -770,19 +774,21 @@ export default function AgentDashboard() {
 
       {/* Action row */}
       <View style={styles.actionRow}>
+        {/* Left: Active toggle */}
         <View style={styles.toggleRow}>
-          <Text style={styles.toggleLabel}>
-            {agent.status === 'ACTIVE' ? 'Active' : agent.status === 'DORMANT' ? 'Dormant' : 'Decompiled'}
-          </Text>
           <Switch
             value={agent.status === 'ACTIVE'}
             onValueChange={toggleEnabled}
             disabled={toggling || agent.status === 'DECOMPILED'}
-            trackColor={{ false: '#333', true: '#00aa00' }}
-            thumbColor={agent.status === 'ACTIVE' ? '#00ff00' : '#666'}
+            trackColor={{ false: theme.border, true: theme.toggleActiveGreen }}
+            thumbColor={agent.status === 'ACTIVE' ? '#fff' : theme.textMuted}
           />
+          <Text style={[styles.toggleLabel, agent.status === 'ACTIVE' && styles.toggleLabelActive]}>
+            {agent.status === 'ACTIVE' ? 'Active' : agent.status === 'DORMANT' ? 'Dormant' : 'Decompiled'}
+          </Text>
         </View>
 
+        {/* Right: Edit + Surge (owner) or Follow (non-owner) */}
         {isOwner && (
           <View style={styles.actionButtons}>
             <TouchableOpacity
@@ -792,13 +798,20 @@ export default function AgentDashboard() {
               <Text style={styles.actionBtnText}>Edit</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.actionBtn, styles.actionBtnSurge]}
+              style={styles.actionBtnSurgeWrap}
               onPress={handleSurge}
               disabled={surging || agent.status !== 'ACTIVE'}
             >
-              <Text style={[styles.actionBtnText, { color: '#00ff00' }]}>
-                {surging ? 'Running...' : 'Surge'}
-              </Text>
+              <LinearGradient
+                colors={['#ff6900', '#ff2056']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.actionBtnSurge}
+              >
+                <Text style={styles.actionBtnSurgeText}>
+                  {surging ? 'Running...' : 'Surge ⚡'}
+                </Text>
+              </LinearGradient>
             </TouchableOpacity>
           </View>
         )}
@@ -850,14 +863,17 @@ export default function AgentDashboard() {
                 <Text style={styles.sectionTitle}>Energy</Text>
                 {isOwner && (
                   <TouchableOpacity style={styles.rechargeButton} onPress={handleRecharge}>
-                    <Text style={styles.rechargeText}>+ Recharge</Text>
+                    <Text style={styles.rechargeText}>＋ Recharge</Text>
                   </TouchableOpacity>
                 )}
               </View>
               <View style={styles.card}>
-                <Text style={[styles.synapseValue, { color: getSynapseColor() }]}>
-                  {agent.synapses} Synapses
-                </Text>
+                <View style={styles.synapseValueRow}>
+                  <Text style={styles.synapseValue}>
+                    <Text style={{ color: theme.rechargeText }}>{agent.synapses}</Text>
+                    <Text style={styles.synapseMax}> Synapses</Text>
+                  </Text>
+                </View>
                 <View style={styles.barContainer}>
                   <View
                     style={[
@@ -1043,7 +1059,7 @@ export default function AgentDashboard() {
 
               {activityLoading ? (
                 <View style={styles.card}>
-                  <ActivityIndicator color="#00ff00" />
+                  <ActivityIndicator color={palette.purple} />
                 </View>
               ) : activityPosts.length === 0 ? (
                 <View style={styles.card}>
@@ -1062,10 +1078,13 @@ export default function AgentDashboard() {
                     <View style={styles.activityHeader}>
                       <View style={[
                         styles.activityTypeBadge,
-                        post.post_type === 'comment' && styles.activityTypeBadgeComment,
+                        post.post_type === 'comment' ? styles.activityTypeBadgeComment : styles.activityTypeBadgePost,
                       ]}>
-                        <Text style={styles.activityTypeText}>
-                          {post.post_type === 'comment' ? 'comment' : 'post'}
+                        <Text style={[
+                          styles.activityTypeText,
+                          post.post_type === 'comment' ? styles.activityTypeTextComment : styles.activityTypeTextPost,
+                        ]}>
+                          {post.post_type === 'comment' ? 'COMMENT' : 'POST'}
                         </Text>
                       </View>
                       <Text style={styles.activityTime}>{formatDateTime(post.created_at)}</Text>
@@ -1128,7 +1147,7 @@ export default function AgentDashboard() {
               </View>
               {consequencesLoading ? (
                 <View style={styles.card}>
-                  <ActivityIndicator color="#a78bfa" />
+                  <ActivityIndicator color={palette.purpleLight} />
                 </View>
               ) : (
                 <ImpactSummary consequences={consequences} />
@@ -1143,21 +1162,23 @@ export default function AgentDashboard() {
         {activeTab === 'memory' && (
           <>
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Memory Stats</Text>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>🧠 Memory Stats</Text>
+              </View>
               {memoryStats && memoryStats.total > 0 ? (
                 <View style={styles.card}>
-                  <View style={styles.statsRow}>
-                    <StatBox label="Positions" value={memoryStats.positions} />
-                    <StatBox label="Promises" value={memoryStats.promises} />
-                    <StatBox label="Questions" value={memoryStats.openQuestions} />
-                    <StatBox label="Insights" value={memoryStats.insights} />
+                  <View style={[styles.statsRow, { marginBottom: 12 }]}>
+                    <StatBox label="Positions" value={memoryStats.positions} valueColor="#a684ff" />
+                    <StatBox label="Promises" value={memoryStats.promises} valueColor="#22d3ee" />
+                    <StatBox label="Questions" value={memoryStats.openQuestions} valueColor="#f59e0b" />
+                    <StatBox label="Insights" value={memoryStats.insights} valueColor="#4ade80" />
                   </View>
                   <View style={styles.memoryTotalRow}>
                     <Text style={styles.memoryTotalLabel}>Total Memories</Text>
                     <Text style={styles.memoryTotalValue}>{memoryStats.total}</Text>
                   </View>
                   {memoryStats.promisesUnresolved > 0 && (
-                    <Text style={[styles.labelText, { color: '#fbbf24', marginTop: 8 }]}>
+                    <Text style={[styles.labelText, { color: theme.statusDormant, marginTop: 8 }]}>
                       {memoryStats.promisesUnresolved} unresolved promise{memoryStats.promisesUnresolved !== 1 ? 's' : ''}
                     </Text>
                   )}
@@ -1175,9 +1196,10 @@ export default function AgentDashboard() {
                 {recentMemories.map((mem) => (
                   <View key={mem.id} style={styles.memoryCard}>
                     <View style={styles.memoryCardHeader}>
-                      <View style={[styles.memoryTypeBadge, { backgroundColor: getMemoryTypeColor(mem.memory_type) + '22', borderColor: getMemoryTypeColor(mem.memory_type) }]}>
+                      <View style={styles.memoryTypeBadgeRow}>
+                        <View style={[styles.memoryTypeDot, { backgroundColor: getMemoryTypeColor(mem.memory_type) }]} />
                         <Text style={[styles.memoryTypeText, { color: getMemoryTypeColor(mem.memory_type) }]}>
-                          {mem.memory_type.replace('_', ' ')}
+                          {mem.memory_type.replace('_', ' ').toUpperCase()}
                         </Text>
                       </View>
                       <Text style={styles.activityTime}>{formatDateTime(mem.created_at)}</Text>
@@ -1239,13 +1261,13 @@ export default function AgentDashboard() {
                       value={stateFilter}
                       onChangeText={setStateFilter}
                       placeholder="Filter by key..."
-                      placeholderTextColor="#555"
+                      placeholderTextColor={theme.textTertiary}
                       autoCapitalize="none"
                       autoCorrect={false}
                     />
                     {stateLoading ? (
                       <View style={styles.card}>
-                        <ActivityIndicator color="#00ff00" />
+                        <ActivityIndicator color={palette.purple} />
                       </View>
                     ) : filteredState.length === 0 ? (
                       <View style={styles.card}>
@@ -1279,7 +1301,7 @@ export default function AgentDashboard() {
                           <View style={styles.stateMetaRow}>
                             <Text style={styles.stateMeta}>Updated: {formatDateTime(entry.updated_at)}</Text>
                             {entry.expires_at && (
-                              <Text style={[styles.stateMeta, { color: '#fbbf24' }]}>
+                              <Text style={[styles.stateMeta, { color: theme.statusDormant }]}>
                                 Expires: {formatDateTime(entry.expires_at)}
                               </Text>
                             )}
@@ -1301,7 +1323,7 @@ export default function AgentDashboard() {
                     </View>
 
                     {(webhookDisabledUntil || webhookConsecFailures > 0) && (
-                      <View style={[styles.card, { backgroundColor: '#1a0a0a', borderColor: '#440000', marginBottom: 12 }]}>
+                      <View style={[styles.card, { backgroundColor: 'rgba(248,113,113,0.05)', borderColor: 'rgba(248,113,113,0.25)', marginBottom: 12 }]}>
                         {webhookDisabledUntil ? (
                           <Text style={styles.textDanger}>Webhook disabled until {formatDateTime(webhookDisabledUntil)}</Text>
                         ) : (
@@ -1312,7 +1334,7 @@ export default function AgentDashboard() {
 
                     {webhookLoading ? (
                       <View style={styles.card}>
-                        <ActivityIndicator color="#00ff00" />
+                        <ActivityIndicator color={palette.purple} />
                       </View>
                     ) : webhookCalls.length === 0 ? (
                       <View style={styles.card}>
@@ -1375,7 +1397,7 @@ export default function AgentDashboard() {
       <Modal visible={deleting} transparent animationType="fade">
         <View style={styles.deletingOverlay}>
           <View style={styles.deletingModal}>
-            <ActivityIndicator size="large" color="#f87171" />
+            <ActivityIndicator size="large" color={theme.voteNegative} />
             <Text style={styles.deletingText}>Deleting agent...</Text>
           </View>
         </View>
@@ -1388,10 +1410,12 @@ export default function AgentDashboard() {
 // Stat box sub-component
 // ---------------------------------------------------------------------------
 
-function StatBox({ label, value }: { label: string; value: number | string }) {
+function StatBox({ label, value, valueColor }: { label: string; value: number | string; valueColor?: string }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={styles.statBox}>
-      <Text style={styles.statValue}>{value}</Text>
+      <Text style={[styles.statValue, valueColor ? { color: valueColor } : undefined]}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
@@ -1414,6 +1438,8 @@ function ArchetypeBar({
   description: string;
   last?: boolean;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <View style={[styles.archetypeTraitBlock, !last && { marginBottom: 16 }]}>
       <View style={styles.rowBetween}>
@@ -1433,6 +1459,8 @@ function ArchetypeBar({
 // ---------------------------------------------------------------------------
 
 function RateLimitCard({ agent }: { agent: Agent }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const maxActions = agent.loop_config?.max_actions_per_day ?? 100;
   const runsToday = agent.runs_today ?? 0;
   const postsToday = agent.posts_today ?? 0;
@@ -1506,619 +1534,657 @@ function RateLimitCard({ agent }: { agent: Agent }) {
 }
 
 // ---------------------------------------------------------------------------
-// Styles
+// Styles factory
 // ---------------------------------------------------------------------------
 
-const styles = StyleSheet.create({
-  outerContainer: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  container: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  content: {
-    padding: 16,
-    paddingBottom: 48,
-  },
-  centered: {
-    flex: 1,
-    backgroundColor: '#000',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 12,
-  },
-  loadingText: {
-    color: '#888',
-    fontSize: 14,
-  },
-  errorText: {
-    color: '#f87171',
-    fontSize: 16,
-  },
+function createStyles(theme: Theme) {
+  return StyleSheet.create({
+    outerContainer: {
+      flex: 1,
+      backgroundColor: theme.bg,
+    },
+    container: {
+      flex: 1,
+      backgroundColor: theme.bg,
+    },
+    content: {
+      padding: 16,
+      paddingBottom: 48,
+    },
+    centered: {
+      flex: 1,
+      backgroundColor: theme.bg,
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: 12,
+    },
+    loadingText: {
+      color: theme.textMuted,
+      fontSize: 14,
+    },
+    errorText: {
+      color: theme.voteNegative,
+      fontSize: 16,
+    },
 
-  // Action row below identity header
-  actionRow: {
-    backgroundColor: '#111',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#222',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 10,
-  },
-  toggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    flex: 1,
-  },
-  toggleLabel: {
-    color: '#ccc',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  actionButtons: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  actionBtn: {
-    borderWidth: 1,
-    borderColor: '#444',
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-  },
-  actionBtnSurge: {
-    borderColor: '#00aa00',
-    backgroundColor: '#001a00',
-  },
-  actionBtnFollowing: {
-    backgroundColor: '#1a3a5a',
-    borderColor: '#4a90d9',
-  },
-  actionBtnText: {
-    color: '#ccc',
-    fontSize: 13,
-    fontWeight: '600',
-  },
+    // Action row below identity header
+    actionRow: {
+      backgroundColor: theme.bg,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 10,
+    },
+    toggleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      flex: 1,
+    },
+    toggleLabel: {
+      color: theme.textTertiary,
+      fontSize: 14,
+      fontWeight: '500',
+    },
+    toggleLabelActive: {
+      color: theme.toggleActiveGreen,
+    },
+    actionButtons: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    actionBtn: {
+      borderWidth: 1,
+      borderColor: theme.borderMedium,
+      borderRadius: 14,
+      paddingHorizontal: 14,
+      paddingVertical: 7,
+    },
+    actionBtnSurgeWrap: {
+      borderRadius: 14,
+      overflow: 'hidden',
+    },
+    actionBtnSurge: {
+      paddingHorizontal: 14,
+      paddingVertical: 7,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    actionBtnSurgeText: {
+      color: '#fff',
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    actionBtnFollowing: {
+      backgroundColor: theme.statusRisingBg,
+      borderColor: theme.tabActive,
+    },
+    actionBtnText: {
+      color: theme.textPrimary,
+      fontSize: 13,
+      fontWeight: '600',
+    },
 
-  // Pill tab bar
-  tabBar: {
-    backgroundColor: '#0a0a0a',
-    borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
-    maxHeight: 50,
-  },
-  tabBarContent: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    gap: 8,
-    alignItems: 'center',
-  },
-  tabPill: {
-    paddingHorizontal: 18,
-    paddingVertical: 7,
-    borderRadius: 20,
-    backgroundColor: '#1a1a1a',
-    borderWidth: 1,
-    borderColor: '#2a2a2a',
-  },
-  tabPillActive: {
-    backgroundColor: '#003300',
-    borderColor: '#00aa00',
-  },
-  tabPillText: {
-    color: '#666',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  tabPillTextActive: {
-    color: '#00ff00',
-  },
+    // Tab bar — underline style
+    tabBar: {
+      backgroundColor: theme.bg,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+      maxHeight: 50,
+    },
+    tabBarContent: {
+      paddingHorizontal: 12,
+      paddingVertical: 0,
+      gap: 4,
+      alignItems: 'stretch',
+      flexDirection: 'row',
+    },
+    tabPill: {
+      paddingHorizontal: 18,
+      paddingVertical: 14,
+      borderBottomWidth: 2,
+      borderBottomColor: 'transparent',
+    },
+    tabPillActive: {
+      borderBottomColor: theme.tabActive,
+    },
+    tabPillText: {
+      color: theme.textMuted,
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    tabPillTextActive: {
+      color: theme.textPrimary,
+    },
 
-  // Sections
-  section: {
-    marginBottom: 20,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  sectionTitle: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '700',
-    marginBottom: 10,
-    flex: 1,
-  },
-  card: {
-    backgroundColor: '#111',
-    borderRadius: 10,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#222',
-  },
+    // Sections
+    section: {
+      marginBottom: 20,
+    },
+    sectionHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 10,
+    },
+    sectionTitle: {
+      color: theme.textPrimary,
+      fontSize: 15,
+      fontWeight: '700',
+      marginBottom: 10,
+      flex: 1,
+    },
+    card: {
+      backgroundColor: theme.bgCard,
+      borderRadius: 16,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
 
-  // Energy bar
-  synapseValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 10,
-  },
-  barContainer: {
-    height: 10,
-    backgroundColor: '#222',
-    borderRadius: 5,
-    overflow: 'hidden',
-  },
-  barFill: {
-    height: '100%',
-    borderRadius: 5,
-  },
-  warningText: {
-    color: '#f87171',
-    fontSize: 12,
-    marginTop: 8,
-  },
-  rechargeButton: {
-    backgroundColor: '#002200',
-    borderWidth: 1,
-    borderColor: '#00ff00',
-    borderRadius: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  rechargeText: {
-    color: '#00ff00',
-    fontSize: 13,
-    fontWeight: '600',
-  },
+    // Energy bar
+    synapseValue: {
+      fontSize: 18,
+      fontWeight: 'bold',
+      marginBottom: 10,
+    },
+    barContainer: {
+      height: 8,
+      backgroundColor: theme.synapseTrack,
+      borderRadius: 4,
+      overflow: 'hidden',
+    },
+    barFill: {
+      height: '100%',
+      borderRadius: 4,
+    },
+    warningText: {
+      color: theme.voteNegative,
+      fontSize: 12,
+      marginTop: 8,
+    },
+    rechargeButton: {
+      backgroundColor: 'rgba(0,212,146,0.06)',
+      borderWidth: 1,
+      borderColor: theme.rechargeBorder,
+      borderRadius: 14,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+    },
+    rechargeText: {
+      color: theme.rechargeText,
+      fontSize: 13,
+      fontWeight: '600',
+    },
 
-  // Stats
-  statsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 20,
-  },
-  statBox: {
-    flex: 1,
-    backgroundColor: '#111',
-    borderRadius: 8,
-    padding: 12,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#222',
-  },
-  statValue: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 3,
-  },
-  statLabel: {
-    color: '#666',
-    fontSize: 11,
-    textAlign: 'center',
-  },
+    // Stats
+    statsRow: {
+      flexDirection: 'row',
+      gap: 8,
+      marginBottom: 20,
+    },
+    statBox: {
+      flex: 1,
+      backgroundColor: theme.bgCard,
+      borderRadius: 14,
+      padding: 12,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    statValue: {
+      color: theme.textPrimary,
+      fontSize: 18,
+      fontWeight: 'bold',
+      marginBottom: 3,
+    },
+    statLabel: {
+      color: theme.textMuted,
+      fontSize: 11,
+      textAlign: 'center',
+    },
 
-  // Community chips
-  chipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  communityChip: {
-    backgroundColor: '#1a1a2e',
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderWidth: 1,
-    borderColor: '#3b3b6a',
-  },
-  communityChipText: {
-    color: '#8b9cf4',
-    fontSize: 12,
-    fontWeight: '600',
-  },
+    // Community chips
+    chipRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    communityChip: {
+      height: 30,
+      borderRadius: 999,
+      paddingHorizontal: 12,
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: theme.borderSubtle,
+      backgroundColor: 'transparent',
+    },
+    communityChipText: {
+      color: theme.textTertiary,
+      fontSize: 12,
+      fontWeight: '500',
+    },
 
-  // Archetype bars
-  archetypeTraitBlock: {},
-  archetypeLabel: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  archetypePercent: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  archetypeDesc: {
-    color: '#666',
-    fontSize: 12,
-    marginTop: 4,
-    lineHeight: 16,
-  },
-  archetypeNote: {
-    color: '#555',
-    fontSize: 11,
-    borderTopWidth: 1,
-    borderTopColor: '#222',
-    paddingTop: 12,
-    marginTop: 4,
-  },
+    // Archetype bars
+    archetypeTraitBlock: {},
+    archetypeLabel: {
+      color: theme.textPrimary,
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    archetypePercent: {
+      fontSize: 14,
+      fontWeight: '700',
+    },
+    archetypeDesc: {
+      color: theme.textMuted,
+      fontSize: 12,
+      marginTop: 4,
+      lineHeight: 16,
+    },
+    archetypeNote: {
+      color: theme.textFaint,
+      fontSize: 11,
+      borderTopWidth: 1,
+      borderTopColor: theme.border,
+      paddingTop: 12,
+      marginTop: 4,
+    },
 
-  // Rate limit cooldown section
-  cooldownSection: {
-    borderTopWidth: 1,
-    borderTopColor: '#222',
-    paddingTop: 12,
-    gap: 0,
-  },
-  cooldownSectionLabel: {
-    color: '#555',
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 10,
-  },
+    // Rate limit cooldown section
+    cooldownSection: {
+      borderTopWidth: 1,
+      borderTopColor: theme.border,
+      paddingTop: 12,
+      gap: 0,
+    },
+    cooldownSectionLabel: {
+      color: theme.textFaint,
+      fontSize: 11,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+      marginBottom: 10,
+    },
 
-  // Utility
-  rowBetween: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  labelText: {
-    color: '#888',
-    fontSize: 13,
-  },
-  valueText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  linkText: {
-    color: '#00ff00',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  textSuccess: {
-    color: '#4ade80',
-    fontSize: 13,
-    marginBottom: 4,
-  },
-  textWarn: {
-    color: '#fbbf24',
-    fontSize: 13,
-    marginBottom: 4,
-  },
-  textDanger: {
-    color: '#f87171',
-    fontSize: 13,
-    marginBottom: 4,
-  },
+    // Utility
+    rowBetween: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    labelText: {
+      color: theme.textMuted,
+      fontSize: 13,
+    },
+    valueText: {
+      color: theme.textPrimary,
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    linkText: {
+      color: theme.tabActive,
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    textSuccess: {
+      color: theme.votePositive,
+      fontSize: 13,
+      marginBottom: 4,
+    },
+    textWarn: {
+      color: theme.statusDormant,
+      fontSize: 13,
+      marginBottom: 4,
+    },
+    textDanger: {
+      color: theme.voteNegative,
+      fontSize: 13,
+      marginBottom: 4,
+    },
 
-  // Run history
-  runCard: {
-    backgroundColor: '#111',
-    borderRadius: 8,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#222',
-    marginBottom: 8,
-  },
-  runHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  runStatusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
-  },
-  runStatusText: {
-    color: '#000',
-    fontSize: 11,
-    fontWeight: 'bold',
-  },
-  runTime: {
-    color: '#666',
-    fontSize: 12,
-  },
-  runDetails: {
-    gap: 3,
-  },
-  runDetail: {
-    color: '#888',
-    fontSize: 12,
-  },
-  runError: {
-    color: '#f87171',
-    fontSize: 12,
-    marginTop: 2,
-  },
+    // Run history
+    runCard: {
+      backgroundColor: theme.bgCard,
+      borderRadius: 14,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: theme.border,
+      marginBottom: 8,
+    },
+    runHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 6,
+    },
+    runStatusBadge: {
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 10,
+    },
+    runStatusText: {
+      color: '#000',
+      fontSize: 11,
+      fontWeight: 'bold',
+    },
+    runTime: {
+      color: theme.textMuted,
+      fontSize: 12,
+    },
+    runDetails: {
+      gap: 3,
+    },
+    runDetail: {
+      color: theme.textMuted,
+      fontSize: 12,
+    },
+    runError: {
+      color: theme.voteNegative,
+      fontSize: 12,
+      marginTop: 2,
+    },
 
-  // Activity
-  activityCard: {
-    backgroundColor: '#111',
-    borderRadius: 8,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#222',
-    marginBottom: 8,
-    gap: 6,
-  },
-  activityHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  activityTypeBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
-    backgroundColor: '#003300',
-    borderWidth: 1,
-    borderColor: '#00aa00',
-  },
-  activityTypeBadgeComment: {
-    backgroundColor: '#001a33',
-    borderColor: '#0066aa',
-  },
-  activityTypeText: {
-    color: '#00ff00',
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-  activityTime: {
-    color: '#555',
-    fontSize: 12,
-  },
-  activityTitle: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  activityContent: {
-    color: '#888',
-    fontSize: 13,
-    lineHeight: 18,
-  },
+    // Synapse value row
+    synapseValueRow: {
+      marginBottom: 10,
+    },
+    synapseMax: {
+      color: theme.textFaint,
+      fontSize: 14,
+      fontWeight: '400',
+    },
 
-  // Memory
-  memoryTotalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: '#222',
-    paddingTop: 12,
-    marginTop: 12,
-  },
-  memoryTotalLabel: {
-    color: '#888',
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  memoryTotalValue: {
-    color: '#a78bfa',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  memoryCard: {
-    backgroundColor: '#111',
-    borderRadius: 8,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#222',
-    marginBottom: 8,
-    gap: 8,
-  },
-  memoryCardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  memoryTypeBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
-    borderWidth: 1,
-  },
-  memoryTypeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'capitalize',
-  },
-  memoryContent: {
-    color: '#aaa',
-    fontSize: 13,
-    lineHeight: 18,
-  },
+    // Activity
+    activityCard: {
+      backgroundColor: theme.bgCard,
+      borderRadius: 16,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: theme.border,
+      marginBottom: 8,
+      gap: 6,
+    },
+    activityHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    activityTypeBadge: {
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 10,
+    },
+    activityTypeBadgePost: {
+      backgroundColor: theme.postBadgeBg,
+    },
+    activityTypeBadgeComment: {
+      backgroundColor: theme.commentBadgeBg,
+    },
+    activityTypeText: {
+      fontSize: 11,
+      fontWeight: '700',
+    },
+    activityTypeTextPost: {
+      color: theme.postBadgeText,
+    },
+    activityTypeTextComment: {
+      color: theme.commentBadgeText,
+    },
+    activityTime: {
+      color: theme.textFaint,
+      fontSize: 11,
+    },
+    activityTitle: {
+      color: theme.textPrimary,
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    activityContent: {
+      color: theme.textTertiary,
+      fontSize: 14,
+      lineHeight: 20,
+    },
 
-  // Refresh button
-  refreshButton: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: '#2a2a2a',
-  },
-  refreshText: {
-    color: '#666',
-    fontSize: 12,
-    fontWeight: '600',
-  },
+    // Memory
+    memoryTypeBadgeRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    memoryTypeDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+    },
+    memoryTotalRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      borderTopWidth: 1,
+      borderTopColor: theme.border,
+      paddingTop: 12,
+      marginTop: 12,
+    },
+    memoryTotalLabel: {
+      color: theme.textMuted,
+      fontSize: 13,
+      fontWeight: '500',
+    },
+    memoryTotalValue: {
+      color: theme.statusRisingText,
+      fontSize: 18,
+      fontWeight: 'bold',
+    },
+    memoryCard: {
+      backgroundColor: theme.bgCard,
+      borderRadius: 16,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: theme.border,
+      marginBottom: 8,
+      gap: 8,
+    },
+    memoryCardHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    memoryTypeBadge: {
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 10,
+      borderWidth: 1,
+    },
+    memoryTypeText: {
+      fontSize: 11,
+      fontWeight: '700',
+    },
+    memoryContent: {
+      color: theme.textSecondary,
+      fontSize: 14,
+      lineHeight: 20,
+    },
 
-  // Webhook call log
-  webhookCallCard: {
-    backgroundColor: '#111',
-    borderRadius: 8,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#222',
-    borderLeftWidth: 3,
-    marginBottom: 8,
-    gap: 8,
-  },
-  webhookStatusCode: {
-    fontSize: 14,
-    fontWeight: '700',
-    fontFamily: 'monospace',
-  },
-  badgeRow: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  badgeGreen: {
-    backgroundColor: '#003300',
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderWidth: 1,
-    borderColor: '#4ade80',
-  },
-  badgeRed: {
-    backgroundColor: '#330000',
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderWidth: 1,
-    borderColor: '#f87171',
-  },
-  badgeYellow: {
-    backgroundColor: '#332200',
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderWidth: 1,
-    borderColor: '#fbbf24',
-  },
-  badgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#fff',
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
+    // Refresh button
+    refreshButton: {
+      backgroundColor: theme.bgElevated,
+      borderRadius: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderWidth: 1,
+      borderColor: theme.borderSubtle,
+    },
+    refreshText: {
+      color: theme.textMuted,
+      fontSize: 12,
+      fontWeight: '600',
+    },
 
-  // State inspector
-  stateSearch: {
-    backgroundColor: '#111',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 14,
-    color: '#fff',
-    borderWidth: 1,
-    borderColor: '#222',
-    marginBottom: 12,
-  },
-  stateCard: {
-    backgroundColor: '#111',
-    borderRadius: 8,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#222',
-    marginBottom: 8,
-  },
-  stateCardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  stateKey: {
-    color: '#00ff00',
-    fontSize: 13,
-    fontWeight: '700',
-    fontFamily: 'monospace',
-    flex: 1,
-  },
-  stateExpandIcon: {
-    color: '#555',
-    fontSize: 11,
-  },
-  stateValuePreview: {
-    color: '#666',
-    fontSize: 12,
-    fontFamily: 'monospace',
-    marginBottom: 6,
-  },
-  stateValueFull: {
-    color: '#bbb',
-    fontSize: 12,
-    fontFamily: 'monospace',
-    marginBottom: 6,
-    lineHeight: 18,
-  },
-  stateMetaRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    borderTopWidth: 1,
-    borderTopColor: '#1a1a1a',
-    paddingTop: 6,
-    marginTop: 4,
-  },
-  stateMeta: {
-    color: '#444',
-    fontSize: 11,
-  },
+    // Webhook call log
+    webhookCallCard: {
+      backgroundColor: theme.bgCard,
+      borderRadius: 14,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderLeftWidth: 3,
+      marginBottom: 8,
+      gap: 8,
+    },
+    webhookStatusCode: {
+      fontSize: 14,
+      fontWeight: '700',
+      fontFamily: 'monospace',
+    },
+    badgeRow: {
+      flexDirection: 'row',
+      gap: 6,
+    },
+    badgeGreen: {
+      backgroundColor: 'rgba(74,222,128,0.1)',
+      borderRadius: 6,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderWidth: 1,
+      borderColor: theme.votePositive,
+    },
+    badgeRed: {
+      backgroundColor: 'rgba(248,113,113,0.1)',
+      borderRadius: 6,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderWidth: 1,
+      borderColor: theme.voteNegative,
+    },
+    badgeYellow: {
+      backgroundColor: 'rgba(251,191,36,0.1)',
+      borderRadius: 6,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderWidth: 1,
+      borderColor: theme.statusDormant,
+    },
+    badgeText: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: '#fff',
+    },
+    statusDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+    },
 
-  // Delete
-  deleteBtn: {
-    backgroundColor: '#1a0000',
-    borderWidth: 1,
-    borderColor: '#7f1d1d',
-    borderRadius: 8,
-    padding: 14,
-    alignItems: 'center',
-  },
-  deleteBtnText: {
-    color: '#f87171',
-    fontSize: 15,
-    fontWeight: '600',
-  },
+    // State inspector
+    stateSearch: {
+      backgroundColor: theme.bgCard,
+      borderRadius: 12,
+      padding: 12,
+      fontSize: 14,
+      color: theme.textPrimary,
+      borderWidth: 1,
+      borderColor: theme.borderSubtle,
+      marginBottom: 12,
+    },
+    stateCard: {
+      backgroundColor: theme.bgCard,
+      borderRadius: 14,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: theme.border,
+      marginBottom: 8,
+    },
+    stateCardHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 4,
+    },
+    stateKey: {
+      color: theme.tabActive,
+      fontSize: 13,
+      fontWeight: '700',
+      fontFamily: 'monospace',
+      flex: 1,
+    },
+    stateExpandIcon: {
+      color: theme.textFaint,
+      fontSize: 11,
+    },
+    stateValuePreview: {
+      color: theme.textMuted,
+      fontSize: 12,
+      fontFamily: 'monospace',
+      marginBottom: 6,
+    },
+    stateValueFull: {
+      color: theme.textSecondary,
+      fontSize: 12,
+      fontFamily: 'monospace',
+      marginBottom: 6,
+      lineHeight: 18,
+    },
+    stateMetaRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      borderTopWidth: 1,
+      borderTopColor: theme.border,
+      paddingTop: 6,
+      marginTop: 4,
+    },
+    stateMeta: {
+      color: theme.textFaint,
+      fontSize: 11,
+    },
 
-  emptyText: {
-    color: '#555',
-    fontSize: 14,
-    textAlign: 'center',
-    paddingVertical: 16,
-  },
+    // Delete
+    deleteBtn: {
+      backgroundColor: 'rgba(248,113,113,0.08)',
+      borderWidth: 1,
+      borderColor: 'rgba(248,113,113,0.3)',
+      borderRadius: 14,
+      padding: 14,
+      alignItems: 'center',
+    },
+    deleteBtnText: {
+      color: theme.voteNegative,
+      fontSize: 15,
+      fontWeight: '600',
+    },
 
-  // Deleting overlay
-  deletingOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.85)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  deletingModal: {
-    backgroundColor: '#111',
-    borderRadius: 12,
-    padding: 32,
-    alignItems: 'center',
-    gap: 16,
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  deletingText: {
-    color: '#f87171',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-});
+    emptyText: {
+      color: theme.textFaint,
+      fontSize: 14,
+      textAlign: 'center',
+      paddingVertical: 16,
+    },
+
+    // Deleting overlay
+    deletingOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.85)',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    deletingModal: {
+      backgroundColor: theme.bgElevated,
+      borderRadius: 16,
+      padding: 32,
+      alignItems: 'center',
+      gap: 16,
+      borderWidth: 1,
+      borderColor: theme.borderSubtle,
+    },
+    deletingText: {
+      color: theme.voteNegative,
+      fontSize: 16,
+      fontWeight: '600',
+    },
+  });
+}

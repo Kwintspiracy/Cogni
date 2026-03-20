@@ -1,5 +1,5 @@
 // Event Detail Screen - Full view of a world event with impacts and timeline
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, Stack } from 'expo-router';
 import { supabase } from '@/lib/supabase';
+import { useTheme, palette, type Theme } from '@/theme';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -109,6 +110,8 @@ export default function EventDetail() {
   const [event, setEvent] = useState<WorldEventDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   useEffect(() => {
     if (!id) return;
@@ -139,7 +142,7 @@ export default function EventDetail() {
     return (
       <View style={styles.centered}>
         <Stack.Screen options={{ title: 'World Event' }} />
-        <ActivityIndicator size="large" color="#60a5fa" />
+        <ActivityIndicator size="large" color={palette.blue} />
       </View>
     );
   }
@@ -224,7 +227,7 @@ export default function EventDetail() {
             const isPast = STATUS_ORDER.indexOf(step) < currentStatusIndex;
             const isCurrent = step === event.status;
             const isFuture = STATUS_ORDER.indexOf(step) > currentStatusIndex;
-            const stepColor = isFuture ? '#333' : getStatusColor(step);
+            const stepColor = isFuture ? theme.border : getStatusColor(step);
             let timestamp: string | null = null;
             if (step === 'seeded') timestamp = formatDate(event.created_at);
             if (step === 'active') timestamp = formatDate(event.started_at);
@@ -247,7 +250,7 @@ export default function EventDetail() {
                     <View
                       style={[
                         styles.timelineLine,
-                        { backgroundColor: isPast ? '#444' : '#222' },
+                        { backgroundColor: isPast ? theme.borderMedium : theme.border },
                       ]}
                     />
                   )}
@@ -257,8 +260,8 @@ export default function EventDetail() {
                   <Text
                     style={[
                       styles.timelineStepLabel,
-                      { color: isFuture ? '#444' : '#ccc' },
-                      isCurrent && { color: '#fff', fontWeight: 'bold' },
+                      { color: isFuture ? theme.textFaint : theme.textSecondary },
+                      isCurrent && { color: theme.textPrimary, fontWeight: 'bold' },
                     ]}
                   >
                     {step.charAt(0).toUpperCase() + step.slice(1)}
@@ -283,158 +286,160 @@ export default function EventDetail() {
 }
 
 // ---------------------------------------------------------------------------
-// Styles
+// Styles factory
 // ---------------------------------------------------------------------------
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  content: {
-    padding: 16,
-    paddingBottom: 40,
-  },
-  centered: {
-    flex: 1,
-    backgroundColor: '#000',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 32,
-  },
-  errorText: {
-    color: '#f87171',
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  headerCard: {
-    backgroundColor: '#1a1a2e',
-    borderRadius: 8,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#222',
-    borderLeftWidth: 4,
-    marginBottom: 16,
-  },
-  headerTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 10,
-  },
-  headerIcon: {
-    fontSize: 28,
-  },
-  headerMeta: {
-    flex: 1,
-    gap: 6,
-  },
-  categoryLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  statusBadge: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
-    borderWidth: 1,
-  },
-  statusText: {
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  title: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    lineHeight: 24,
-  },
-  section: {
-    backgroundColor: '#111',
-    borderRadius: 8,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#222',
-    marginBottom: 12,
-  },
-  sectionLabel: {
-    color: '#555',
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-    marginBottom: 8,
-  },
-  description: {
-    color: '#ccc',
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  impactRow: {
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
-    gap: 3,
-  },
-  impactMetric: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  impactChange: {
-    color: '#4ade80',
-    fontSize: 12,
-    fontFamily: 'monospace',
-  },
-  impactDate: {
-    color: '#555',
-    fontSize: 11,
-  },
-  timeline: {
-    gap: 0,
-  },
-  timelineRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  timelineConnectorCol: {
-    alignItems: 'center',
-    width: 16,
-  },
-  timelineDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: 2,
-    marginTop: 4,
-  },
-  timelineLine: {
-    width: 2,
-    flex: 1,
-    minHeight: 24,
-    marginVertical: 2,
-  },
-  timelineLabelCol: {
-    flex: 1,
-    paddingBottom: 16,
-  },
-  timelineStepLabel: {
-    fontSize: 13,
-    lineHeight: 20,
-  },
-  timelineTimestamp: {
-    color: '#555',
-    fontSize: 11,
-    marginTop: 1,
-  },
-  createdAt: {
-    color: '#444',
-    fontSize: 11,
-    textAlign: 'center',
-    marginTop: 8,
-  },
-});
+function createStyles(theme: Theme) {
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.bg,
+    },
+    content: {
+      padding: 16,
+      paddingBottom: 40,
+    },
+    centered: {
+      flex: 1,
+      backgroundColor: theme.bg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 32,
+    },
+    errorText: {
+      color: theme.voteNegative,
+      fontSize: 14,
+      textAlign: 'center',
+    },
+    headerCard: {
+      backgroundColor: theme.bgCard,
+      borderRadius: 8,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderLeftWidth: 4,
+      marginBottom: 16,
+    },
+    headerTop: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 10,
+    },
+    headerIcon: {
+      fontSize: 28,
+    },
+    headerMeta: {
+      flex: 1,
+      gap: 6,
+    },
+    categoryLabel: {
+      fontSize: 11,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    statusBadge: {
+      alignSelf: 'flex-start',
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 4,
+      borderWidth: 1,
+    },
+    statusText: {
+      fontSize: 9,
+      fontWeight: '700',
+      letterSpacing: 0.5,
+    },
+    title: {
+      color: theme.textPrimary,
+      fontSize: 18,
+      fontWeight: 'bold',
+      lineHeight: 24,
+    },
+    section: {
+      backgroundColor: theme.bgCard,
+      borderRadius: 8,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: theme.border,
+      marginBottom: 12,
+    },
+    sectionLabel: {
+      color: theme.textTertiary,
+      fontSize: 10,
+      fontWeight: '700',
+      letterSpacing: 1,
+      textTransform: 'uppercase',
+      marginBottom: 8,
+    },
+    description: {
+      color: theme.textSecondary,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    impactRow: {
+      paddingVertical: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+      gap: 3,
+    },
+    impactMetric: {
+      color: theme.textPrimary,
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    impactChange: {
+      color: theme.votePositive,
+      fontSize: 12,
+      fontFamily: 'monospace',
+    },
+    impactDate: {
+      color: theme.textTertiary,
+      fontSize: 11,
+    },
+    timeline: {
+      gap: 0,
+    },
+    timelineRow: {
+      flexDirection: 'row',
+      gap: 12,
+    },
+    timelineConnectorCol: {
+      alignItems: 'center',
+      width: 16,
+    },
+    timelineDot: {
+      width: 12,
+      height: 12,
+      borderRadius: 6,
+      borderWidth: 2,
+      marginTop: 4,
+    },
+    timelineLine: {
+      width: 2,
+      flex: 1,
+      minHeight: 24,
+      marginVertical: 2,
+    },
+    timelineLabelCol: {
+      flex: 1,
+      paddingBottom: 16,
+    },
+    timelineStepLabel: {
+      fontSize: 13,
+      lineHeight: 20,
+    },
+    timelineTimestamp: {
+      color: theme.textTertiary,
+      fontSize: 11,
+      marginTop: 1,
+    },
+    createdAt: {
+      color: theme.textFaint,
+      fontSize: 11,
+      textAlign: 'center',
+      marginTop: 8,
+    },
+  });
+}

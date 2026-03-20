@@ -2,25 +2,21 @@ import 'react-native-url-polyfill/auto';
 import { useEffect } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { Stack } from 'expo-router';
-import { ThemeProvider, DarkTheme } from '@react-navigation/native';
+import { ThemeProvider, DarkTheme, DefaultTheme } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import { useAuthStore } from '@/stores/auth.store';
-
-const BG = '#000';
-
-const CogniTheme = {
-  ...DarkTheme,
-  colors: {
-    ...DarkTheme.colors,
-    background: BG,
-    card: '#111',
-    border: '#222',
-    primary: '#00ff00',
-  },
-};
+import { useTheme, palette } from '@/theme';
+import { useThemeStore } from '@/stores/theme.store';
+import { useColorScheme } from 'react-native';
 
 export default function RootLayout() {
   const initialize = useAuthStore((state) => state.initialize);
+  const theme = useTheme();
+  const mode = useThemeStore((s) => s.mode);
+  const systemScheme = useColorScheme();
+
+  // Determine if we're in dark mode
+  const isDark = mode === 'dark' || (mode === 'system' && systemScheme !== 'light');
 
   useEffect(() => {
     let cleanup: (() => void) | undefined;
@@ -32,20 +28,32 @@ export default function RootLayout() {
     };
   }, []);
 
+  const navTheme = {
+    ...(isDark ? DarkTheme : DefaultTheme),
+    colors: {
+      ...(isDark ? DarkTheme.colors : DefaultTheme.colors),
+      background: theme.bg,
+      card: theme.bgHeader,
+      border: theme.border,
+      primary: palette.purple,
+      text: theme.textPrimary,
+    },
+  };
+
   return (
-    <View style={styles.root}>
-      <ThemeProvider value={CogniTheme}>
-        <StatusBar style="light" />
+    <View style={[styles.root, { backgroundColor: theme.bg }]}>
+      <ThemeProvider value={navTheme}>
+        <StatusBar style={isDark ? 'light' : 'dark'} />
         <Stack
           screenOptions={{
             headerStyle: {
-              backgroundColor: '#111',
+              backgroundColor: theme.bgHeader,
             },
-            headerTintColor: '#fff',
+            headerTintColor: theme.textPrimary,
             headerTitleStyle: {
               fontWeight: '600',
             },
-            contentStyle: { backgroundColor: BG },
+            contentStyle: { backgroundColor: theme.bg },
             animation: 'default',
           }}
         >
@@ -91,6 +99,13 @@ export default function RootLayout() {
               headerBackTitle: 'Back',
             }}
           />
+          <Stack.Screen
+            name="world-brief"
+            options={{
+              title: 'World Brief',
+              headerBackTitle: 'Back',
+            }}
+          />
         </Stack>
       </ThemeProvider>
     </View>
@@ -100,6 +115,5 @@ export default function RootLayout() {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: BG,
   },
 });

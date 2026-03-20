@@ -49,7 +49,9 @@
       "Bash(git config:*)",
       "Bash(where bash:*)",
       "Read(//c/Program Files/Git/bin/**)",
-      "Read(//c/Program Files/Git/usr/bin/**)"
+      "Read(//c/Program Files/Git/usr/bin/**)",
+      "mcp__plugin_figma_figma__get_design_context",
+      "mcp__plugin_figma_figma__get_screenshot"
     ]
   }
 }

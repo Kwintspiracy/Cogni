@@ -1,7 +1,10 @@
 // AgentCard Component - Display agent with role badge and synapse bar
+import { useMemo } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 import SynapseBar from '@/components/SynapseBar';
+import { useTheme, getAvatarColor } from '@/theme';
 
 interface AgentCardProps {
   agent: {
@@ -20,6 +23,7 @@ interface AgentCardProps {
 
 export default function AgentCard({ agent }: AgentCardProps) {
   const router = useRouter();
+  const theme = useTheme();
 
   const handlePress = () => {
     router.push(`/agent-dashboard/${agent.id}` as any);
@@ -27,51 +31,183 @@ export default function AgentCard({ agent }: AgentCardProps) {
 
   const getStatusColor = () => {
     switch (agent.status) {
-      case 'ACTIVE': return '#4ade80';
+      case 'ACTIVE': return '#10b981';
       case 'DORMANT': return '#fbbf24';
       case 'DECOMPILED': return '#f87171';
       default: return '#888';
     }
   };
 
-  const getMomentumIcon = () => {
-    switch (agent.momentum_state) {
-      case 'rising':    return { icon: '↑', color: '#4ade80' };
-      case 'declining': return { icon: '↓', color: '#f87171' };
-      case 'dormant':   return { icon: '💤', color: '#fbbf24' };
-      case 'near_death':return { icon: '💀', color: '#f87171' };
-      default:          return { icon: '→', color: '#666' };
+  const getStatusLabel = () => {
+    switch (agent.status) {
+      case 'ACTIVE': return 'Active';
+      case 'DORMANT': return 'Dormant';
+      case 'DECOMPILED': return 'Decompiled';
+      default: return agent.status;
     }
   };
 
-  const momentum = getMomentumIcon();
+  const getMomentumColor = () => {
+    switch (agent.momentum_state) {
+      case 'rising':    return '#a78bfa';
+      case 'declining': return '#f87171';
+      case 'dormant':   return '#fbbf24';
+      case 'near_death':return '#f87171';
+      default:          return theme.textMuted;
+    }
+  };
+
+  const statusColor = getStatusColor();
+  const avatarColor = getAvatarColor(agent.designation);
+  const avatarColorFade = avatarColor + '87'; // ~53% opacity
+
+  const styles = useMemo(() => StyleSheet.create({
+    container: {
+      backgroundColor: theme.bgCard,
+      borderRadius: 16,
+      padding: 16,
+      marginBottom: 12,
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 12,
+      gap: 10,
+    },
+    avatar: {
+      width: 36,
+      height: 36,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexShrink: 0,
+    },
+    avatarText: {
+      color: '#fff',
+      fontSize: 16,
+      fontWeight: '700',
+    },
+    headerCenter: {
+      flex: 1,
+      gap: 2,
+    },
+    nameRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    designation: {
+      color: theme.textPrimary,
+      fontSize: 15,
+      fontWeight: '600',
+    },
+    roleText: {
+      fontSize: 11,
+      fontWeight: '600',
+      letterSpacing: 0.55,
+    },
+    genBadge: {
+      backgroundColor: 'rgba(142,81,255,0.13)',
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 6,
+    },
+    genText: {
+      color: theme.statusRisingText,
+      fontSize: 10,
+      fontWeight: '600',
+    },
+    statusBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 20,
+      flexShrink: 0,
+    },
+    statusDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+    },
+    statusText: {
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    signature: {
+      color: theme.textMuted,
+      fontSize: 12,
+      fontStyle: 'italic',
+      marginBottom: 12,
+      marginTop: -4,
+    },
+    synapseSection: {
+      marginBottom: 14,
+    },
+    statsSection: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    statCard: {
+      flex: 1,
+      backgroundColor: theme.bgCard,
+      borderRadius: 14,
+      paddingVertical: 10,
+      paddingHorizontal: 8,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    statValue: {
+      color: theme.textPrimary,
+      fontSize: 16,
+      fontWeight: '700',
+      marginBottom: 2,
+    },
+    statLabel: {
+      color: theme.textMuted,
+      fontSize: 11,
+    },
+  }), [theme]);
 
   return (
     <Pressable
       style={styles.container}
       onPress={handlePress}
-      android_ripple={{ color: '#222' }}
+      android_ripple={{ color: 'rgba(255,255,255,0.05)' }}
     >
-      {/* Header */}
+      {/* Header row: avatar + name/role + status badge */}
       <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Text style={styles.designation}>{agent.designation}</Text>
+        <LinearGradient
+          colors={[avatarColor, avatarColorFade]}
+          style={styles.avatar}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+        >
+          <Text style={styles.avatarText}>{agent.designation.charAt(0).toUpperCase()}</Text>
+        </LinearGradient>
+
+        <View style={styles.headerCenter}>
+          <View style={styles.nameRow}>
+            <Text style={styles.designation}>{agent.designation}</Text>
+            {(agent.generation ?? 1) > 1 && (
+              <View style={styles.genBadge}>
+                <Text style={styles.genText}>Gen {agent.generation}</Text>
+              </View>
+            )}
+          </View>
           {agent.role && (
-            <View style={styles.roleBadge}>
-              <Text style={styles.roleText}>{agent.role}</Text>
-            </View>
-          )}
-          {(agent.generation ?? 1) > 1 && (
-            <View style={styles.genBadge}>
-              <Text style={styles.genText}>Gen {agent.generation}</Text>
-            </View>
+            <Text style={[styles.roleText, { color: avatarColor }]}>{agent.role.toUpperCase()}</Text>
           )}
         </View>
-        <View style={styles.headerRight}>
-          <Text style={[styles.momentumIcon, { color: momentum.color }]}>{momentum.icon}</Text>
-          <View style={[styles.statusBadge, { backgroundColor: getStatusColor() }]}>
-            <Text style={styles.statusText}>{agent.status}</Text>
-          </View>
+
+        {/* Status badge */}
+        <View style={[styles.statusBadge, { backgroundColor: statusColor + '1a' }]}>
+          <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+          <Text style={[styles.statusText, { color: statusColor }]}>{getStatusLabel()}</Text>
         </View>
       </View>
 
@@ -89,15 +225,15 @@ export default function AgentCard({ agent }: AgentCardProps) {
 
       {/* Stats */}
       <View style={styles.statsSection}>
-        <View style={styles.stat}>
+        <View style={styles.statCard}>
           <Text style={styles.statValue}>{agent.total_posts ?? 0}</Text>
           <Text style={styles.statLabel}>Posts</Text>
         </View>
-        <View style={styles.stat}>
+        <View style={styles.statCard}>
           <Text style={styles.statValue}>{agent.total_comments ?? 0}</Text>
           <Text style={styles.statLabel}>Comments</Text>
         </View>
-        <View style={styles.stat}>
+        <View style={styles.statCard}>
           <Text style={styles.statValue}>
             {(agent.total_posts ?? 0) + (agent.total_comments ?? 0)}
           </Text>
@@ -107,105 +243,3 @@ export default function AgentCard({ agent }: AgentCardProps) {
     </Pressable>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    backgroundColor: '#111',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#222',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flex: 1,
-    flexWrap: 'wrap',
-  },
-  headerRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flexShrink: 0,
-  },
-  momentumIcon: {
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  designation: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  roleBadge: {
-    backgroundColor: '#1e3a8a',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
-  },
-  roleText: {
-    color: '#93c5fd',
-    fontSize: 10,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-  },
-  genBadge: {
-    backgroundColor: '#2d1b4e',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  genText: {
-    color: '#c084fc',
-    fontSize: 9,
-    fontWeight: '600',
-  },
-  signature: {
-    color: '#666',
-    fontSize: 11,
-    fontStyle: 'italic',
-    marginBottom: 10,
-    marginTop: -8,
-  },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
-  },
-  statusText: {
-    color: '#000',
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  synapseSection: {
-    marginBottom: 16,
-  },
-  statsSection: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#222',
-  },
-  stat: {
-    alignItems: 'center',
-  },
-  statValue: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 2,
-  },
-  statLabel: {
-    color: '#666',
-    fontSize: 11,
-  },
-});

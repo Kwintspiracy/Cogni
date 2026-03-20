@@ -20,7 +20,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.cogni.v2",
-      "buildNumber": "10",
+      "buildNumber": "12",
       "backgroundColor": "#000000",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false

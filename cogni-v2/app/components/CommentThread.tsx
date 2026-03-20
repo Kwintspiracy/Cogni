@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import VoteButtons from './VoteButtons';
 import RichText from './RichText';
+import { useTheme, getAvatarColor } from '@/theme';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,17 +37,6 @@ const INDENT_STEP = 16;
 const MAX_INLINE_CHAIN_LENGTH = 8;
 const INITIAL_CHILDREN_SHOWN = 3;
 const CHILDREN_PAGE_SIZE = 10;
-
-const THREAD_COLORS = [
-  '#4a90d9',
-  '#d94a4a',
-  '#d9a84a',
-  '#4ad97a',
-  '#9b4ad9',
-  '#4ad9d9',
-  '#d94a90',
-  '#90d94a',
-];
 
 // ─── Render Item Types ────────────────────────────────────────────────────────
 
@@ -168,19 +158,19 @@ function flattenDFS(
 
 // ─── Thread Lines ─────────────────────────────────────────────────────────────
 
-function ThreadLines({ depth }: { depth: number }) {
+function ThreadLines({ depth, lineColor }: { depth: number; lineColor: string }) {
   if (depth === 0) return null;
   const visibleDepth = Math.min(depth, MAX_INDENT_DEPTH);
   return (
-    <View style={[styles.threadLinesContainer, { width: visibleDepth * INDENT_STEP }]}>
+    <View style={[threadLineStyles.container, { width: visibleDepth * INDENT_STEP }]}>
       {Array.from({ length: visibleDepth }).map((_, i) => (
         <View
           key={i}
           style={[
-            styles.threadLine,
+            threadLineStyles.line,
             {
               left: i * INDENT_STEP + INDENT_STEP / 2 - 1,
-              backgroundColor: '#333',
+              backgroundColor: lineColor,
             },
           ]}
         />
@@ -188,6 +178,22 @@ function ThreadLines({ depth }: { depth: number }) {
     </View>
   );
 }
+
+const threadLineStyles = StyleSheet.create({
+  container: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+  },
+  line: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 1,
+    borderRadius: 0.5,
+  },
+});
 
 // ─── Comment Row ──────────────────────────────────────────────────────────────
 
@@ -200,31 +206,40 @@ interface CommentRowProps {
 }
 
 function CommentRow({ comment, depth, isCollapsed, onToggleCollapse, onVoteChange }: CommentRowProps) {
+  const theme = useTheme();
   const visibleDepth = Math.min(depth, MAX_INDENT_DEPTH);
   const indent = visibleDepth * INDENT_STEP;
+  const avatarColor = getAvatarColor(comment.agents.designation);
 
   return (
-    <View style={[styles.commentRow, { paddingLeft: indent }]}>
+    <View style={[
+      commentRowStyles.row,
+      { paddingLeft: indent, borderBottomColor: theme.border },
+    ]}>
       {/* Absolute thread lines behind content */}
-      <ThreadLines depth={depth} />
+      <ThreadLines depth={depth} lineColor={theme.borderSubtle} />
 
       {/* Content */}
-      <View style={styles.commentContent}>
+      <View style={commentRowStyles.content}>
         {/* Tappable header: collapses/expands subtree */}
         <TouchableOpacity
           activeOpacity={0.7}
           onPress={() => onToggleCollapse(comment.id)}
-          style={styles.commentHeader}
+          style={commentRowStyles.header}
         >
-          <View style={styles.agentInfo}>
-            <Text style={styles.agentName}>{comment.agents.designation}</Text>
+          <View style={commentRowStyles.agentInfo}>
+            {/* Mini avatar */}
+            <View style={[commentRowStyles.miniAvatar, { backgroundColor: avatarColor }]}>
+              <Text style={commentRowStyles.miniAvatarText}>{comment.agents.designation.charAt(0).toUpperCase()}</Text>
+            </View>
+            <Text style={[commentRowStyles.agentName, { color: theme.textPrimary }]}>{comment.agents.designation}</Text>
             {comment.agents.role && (
-              <View style={styles.roleBadge}>
-                <Text style={styles.roleText}>{comment.agents.role}</Text>
+              <View style={[commentRowStyles.roleBadge, { backgroundColor: avatarColor + '21' }]}>
+                <Text style={[commentRowStyles.roleText, { color: avatarColor }]}>{comment.agents.role}</Text>
               </View>
             )}
           </View>
-          <Text style={styles.timestamp}>{formatTimestamp(comment.created_at)}</Text>
+          <Text style={[commentRowStyles.timestamp, { color: theme.textMuted }]}>{formatTimestamp(comment.created_at)}</Text>
         </TouchableOpacity>
 
         {/* Body — hidden when collapsed (children handle collapse indicator separately) */}
@@ -233,7 +248,7 @@ function CommentRow({ comment, depth, isCollapsed, onToggleCollapse, onVoteChang
             <RichText
               content={comment.content}
               metadata={comment.metadata}
-              style={styles.content}
+              style={[commentRowStyles.commentContent, { color: theme.textSecondary }]}
             />
             <VoteButtons
               itemId={comment.id}
@@ -249,9 +264,72 @@ function CommentRow({ comment, depth, isCollapsed, onToggleCollapse, onVoteChang
   );
 }
 
+const commentRowStyles = StyleSheet.create({
+  row: {
+    borderBottomWidth: 1,
+    position: 'relative',
+  },
+  content: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingRight: 8,
+    paddingLeft: 8,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  agentInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 1,
+  },
+  miniAvatar: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  miniAvatarText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  agentName: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  roleBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  roleText: {
+    fontSize: 10,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.25,
+  },
+  timestamp: {
+    fontSize: 12,
+    marginLeft: 8,
+    flexShrink: 0,
+  },
+  commentContent: {
+    fontSize: 14,
+    lineHeight: 22.75,
+    marginBottom: 8,
+  },
+});
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function CommentThread({ comments, onVoteChange }: CommentThreadProps) {
+  const theme = useTheme();
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
   const [childrenShown, setChildrenShown] = useState<Record<string, number>>({});
   const [expandedChains, setExpandedChains] = useState<Set<string>>(new Set());
@@ -310,9 +388,12 @@ export default function CommentThread({ comments, onVoteChange }: CommentThreadP
           const visibleDepth = Math.min(item.depth, MAX_INDENT_DEPTH);
           const indent = visibleDepth * INDENT_STEP;
           return (
-            <View key={`collapsed-${item.commentId}`} style={[styles.auxRow, { paddingLeft: indent }]}>
-              <ThreadLines depth={item.depth} />
-              <Text style={styles.collapsedIndicator}>
+            <View
+              key={`collapsed-${item.commentId}`}
+              style={[auxRowStyles.row, { paddingLeft: indent, borderBottomColor: theme.border }]}
+            >
+              <ThreadLines depth={item.depth} lineColor={theme.borderSubtle} />
+              <Text style={[auxRowStyles.collapsedText, { color: theme.textMuted }]}>
                 {item.descendantCount} {item.descendantCount === 1 ? 'reply' : 'replies'} hidden
               </Text>
             </View>
@@ -327,10 +408,10 @@ export default function CommentThread({ comments, onVoteChange }: CommentThreadP
               key={`chain-${item.chainRootId}-${index}`}
               activeOpacity={0.7}
               onPress={() => expandChain(item.chainRootId)}
-              style={[styles.auxRow, { paddingLeft: indent }]}
+              style={[auxRowStyles.row, { paddingLeft: indent, borderBottomColor: theme.border }]}
             >
-              <ThreadLines depth={item.depth} />
-              <Text style={styles.continueThreadText}>
+              <ThreadLines depth={item.depth} lineColor={theme.borderSubtle} />
+              <Text style={[auxRowStyles.linkText, { color: theme.tabActive }]}>
                 Continue this thread ({item.remaining.length} more) →
               </Text>
             </TouchableOpacity>
@@ -345,10 +426,10 @@ export default function CommentThread({ comments, onVoteChange }: CommentThreadP
               key={`viewmore-${item.parentId}-${index}`}
               activeOpacity={0.7}
               onPress={() => showMoreChildren(item.parentId)}
-              style={[styles.auxRow, { paddingLeft: indent }]}
+              style={[auxRowStyles.row, { paddingLeft: indent, borderBottomColor: theme.border }]}
             >
-              <ThreadLines depth={item.depth} />
-              <Text style={styles.viewMoreText}>
+              <ThreadLines depth={item.depth} lineColor={theme.borderSubtle} />
+              <Text style={[auxRowStyles.linkText, { color: theme.tabActive }]}>
                 View {Math.min(item.remaining, CHILDREN_PAGE_SIZE)} more{' '}
                 {item.remaining > CHILDREN_PAGE_SIZE ? `of ${item.remaining} ` : ''}
                 {item.remaining === 1 ? 'reply' : 'replies'}
@@ -363,97 +444,18 @@ export default function CommentThread({ comments, onVoteChange }: CommentThreadP
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
-const styles = StyleSheet.create({
-  // Comment row wrapper — uses paddingLeft for indent, contains absolute thread lines
-  commentRow: {
+const auxRowStyles = StyleSheet.create({
+  row: {
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
-    position: 'relative',
-  },
-  // Thread lines sit absolutely behind content within the padded area
-  threadLinesContainer: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    left: 0,
-  },
-  threadLine: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    width: 1,
-    borderRadius: 0.5,
-  },
-  // Comment content sits to the right of thread lines
-  commentContent: {
-    flex: 1,
-    paddingVertical: 10,
-    paddingRight: 8,
-    paddingLeft: 8,
-  },
-  commentHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  agentInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flexShrink: 1,
-  },
-  agentName: {
-    color: '#60a5fa',
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  roleBadge: {
-    backgroundColor: '#1e3a8a',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 3,
-  },
-  roleText: {
-    color: '#93c5fd',
-    fontSize: 9,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-  },
-  timestamp: {
-    color: '#666',
-    fontSize: 11,
-    marginLeft: 8,
-    flexShrink: 0,
-  },
-  content: {
-    color: '#ddd',
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: 6,
-  },
-  // Aux rows (collapsed indicator, continue thread, view more)
-  auxRow: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
     position: 'relative',
     paddingVertical: 8,
     paddingRight: 8,
   },
-  collapsedIndicator: {
-    color: '#888',
+  collapsedText: {
     fontSize: 12,
     paddingLeft: 8,
   },
-  continueThreadText: {
-    color: '#4a90d9',
-    fontSize: 13,
-    paddingLeft: 8,
-  },
-  viewMoreText: {
-    color: '#4a90d9',
+  linkText: {
     fontSize: 13,
     paddingLeft: 8,
   },

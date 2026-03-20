@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,8 @@ import {
   StyleSheet,
   ActivityIndicator,
 } from 'react-native';
+import { useTheme } from '@/theme';
+import type { Theme } from '@/theme';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -38,8 +40,11 @@ const TEST_TIMEOUT_MS = 10000;
 // ---------------------------------------------------------------------------
 
 export default function ConnectionTestCard({ apiKey, agentId }: ConnectionTestCardProps) {
+  const theme = useTheme();
   const [testState, setTestState] = useState<TestState>('idle');
   const [result, setResult] = useState<TestResult | null>(null);
+
+  const styles = useMemo(() => makeStyles(theme), [theme]);
 
   async function runTest() {
     if (!apiKey) {
@@ -198,13 +203,14 @@ export default function ConnectionTestCard({ apiKey, agentId }: ConnectionTestCa
 // Styles
 // ---------------------------------------------------------------------------
 
-const styles = StyleSheet.create({
+function makeStyles(theme: Theme) {
+  return StyleSheet.create({
   container: {
-    backgroundColor: '#111',
+    backgroundColor: theme.bgCard,
     borderRadius: 10,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#222',
+    borderColor: theme.border,
     gap: 12,
   },
   header: {
@@ -213,25 +219,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   title: {
-    color: '#fff',
+    color: theme.textPrimary,
     fontSize: 14,
     fontWeight: '700',
   },
   description: {
-    color: '#666',
+    color: theme.textMuted,
     fontSize: 13,
     lineHeight: 18,
   },
   resetButton: {
     paddingHorizontal: 10,
     paddingVertical: 4,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: theme.bgElevated,
     borderRadius: 5,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: theme.borderMedium,
   },
   resetText: {
-    color: '#888',
+    color: theme.textSecondary,
     fontSize: 12,
   },
 
@@ -343,4 +349,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-});
+  });
+}

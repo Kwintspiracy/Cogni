@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { supabase } from '@/lib/supabase';
+import { useTheme, palette, type Theme } from '@/theme';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -115,6 +116,8 @@ export default function MetricsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   const loadMetrics = useCallback(async () => {
     try {
@@ -150,8 +153,8 @@ export default function MetricsScreen() {
             key,
             label: getLabel(key),
             value: '--',
-            color: '#555',
-            bg: '#111',
+            color: '#888',
+            bg: 'transparent',
           });
           continue;
         }
@@ -216,7 +219,7 @@ export default function MetricsScreen() {
       style={styles.container}
       contentContainerStyle={styles.content}
       refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00ff00" />
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.green} />
       }
     >
       {/* Header */}
@@ -239,7 +242,7 @@ export default function MetricsScreen() {
 
       {/* Loading */}
       {loading && !refreshing && (
-        <ActivityIndicator size="large" color="#00ff00" style={{ marginTop: 60 }} />
+        <ActivityIndicator size="large" color={palette.green} style={{ marginTop: 60 }} />
       )}
 
       {/* Metric grid */}
@@ -282,115 +285,117 @@ export default function MetricsScreen() {
 }
 
 // ---------------------------------------------------------------------------
-// Styles
+// Styles factory
 // ---------------------------------------------------------------------------
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#111',
-  },
-  content: {
-    padding: 16,
-    paddingBottom: 48,
-  },
+function createStyles(theme: Theme) {
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.bg,
+    },
+    content: {
+      padding: 16,
+      paddingBottom: 48,
+    },
 
-  header: {
-    marginBottom: 20,
-  },
-  title: {
-    color: '#fff',
-    fontSize: 22,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  subtitle: {
-    color: '#555',
-    fontSize: 12,
-  },
+    header: {
+      marginBottom: 20,
+    },
+    title: {
+      color: theme.textPrimary,
+      fontSize: 22,
+      fontWeight: '700',
+      marginBottom: 4,
+    },
+    subtitle: {
+      color: theme.textTertiary,
+      fontSize: 12,
+    },
 
-  errorBox: {
-    backgroundColor: '#450a0a',
-    borderRadius: 8,
-    padding: 14,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#f87171',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  errorText: {
-    color: '#f87171',
-    fontSize: 13,
-    flex: 1,
-    marginRight: 8,
-  },
-  retryBtn: {
-    backgroundColor: '#7f1d1d',
-    borderRadius: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  retryText: {
-    color: '#fca5a5',
-    fontSize: 12,
-    fontWeight: '600',
-  },
+    errorBox: {
+      backgroundColor: 'rgba(248,113,113,0.08)',
+      borderRadius: 8,
+      padding: 14,
+      marginBottom: 16,
+      borderWidth: 1,
+      borderColor: theme.voteNegative,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    errorText: {
+      color: theme.voteNegative,
+      fontSize: 13,
+      flex: 1,
+      marginRight: 8,
+    },
+    retryBtn: {
+      backgroundColor: 'rgba(248,113,113,0.15)',
+      borderRadius: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+    },
+    retryText: {
+      color: theme.voteNegative,
+      fontSize: 12,
+      fontWeight: '600',
+    },
 
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  card: {
-    width: '47.5%',
-    borderRadius: 10,
-    padding: 16,
-    borderWidth: 1,
-    minHeight: 90,
-    justifyContent: 'center',
-  },
-  cardValue: {
-    fontSize: 26,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  cardLabel: {
-    color: '#aaa',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  cardSub: {
-    color: '#666',
-    fontSize: 10,
-    marginTop: 4,
-    lineHeight: 14,
-  },
+    grid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+    },
+    card: {
+      width: '47.5%',
+      borderRadius: 10,
+      padding: 16,
+      borderWidth: 1,
+      minHeight: 90,
+      justifyContent: 'center',
+    },
+    cardValue: {
+      fontSize: 26,
+      fontWeight: '700',
+      marginBottom: 4,
+    },
+    cardLabel: {
+      color: theme.textSecondary,
+      fontSize: 12,
+      fontWeight: '500',
+    },
+    cardSub: {
+      color: theme.textMuted,
+      fontSize: 10,
+      marginTop: 4,
+      lineHeight: 14,
+    },
 
-  emptyBox: {
-    marginTop: 60,
-    alignItems: 'center',
-    paddingHorizontal: 24,
-  },
-  emptyText: {
-    color: '#aaa',
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 12,
-  },
-  emptyHint: {
-    color: '#555',
-    fontSize: 12,
-    textAlign: 'center',
-    lineHeight: 18,
-    fontFamily: 'monospace',
-  },
+    emptyBox: {
+      marginTop: 60,
+      alignItems: 'center',
+      paddingHorizontal: 24,
+    },
+    emptyText: {
+      color: theme.textSecondary,
+      fontSize: 16,
+      fontWeight: '600',
+      marginBottom: 12,
+    },
+    emptyHint: {
+      color: theme.textTertiary,
+      fontSize: 12,
+      textAlign: 'center',
+      lineHeight: 18,
+      fontFamily: 'monospace',
+    },
 
-  footer: {
-    color: '#444',
-    fontSize: 11,
-    textAlign: 'center',
-    marginTop: 24,
-  },
-});
+    footer: {
+      color: theme.textFaint,
+      fontSize: 11,
+      textAlign: 'center',
+      marginTop: 24,
+    },
+  });
+}

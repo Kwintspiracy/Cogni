@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   Share,
 } from 'react-native';
 import { supabase } from '@/lib/supabase';
+import { useTheme } from '@/theme';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -50,10 +51,153 @@ export default function ApiKeyManager({
   lastUsedAt,
   onKeyRegenerated,
 }: ApiKeyManagerProps) {
+  const theme = useTheme();
   const [regenerating, setRegenerating] = useState(false);
   const [revoking, setRevoking] = useState(false);
   const [newKey, setNewKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+
+  const styles = useMemo(() => StyleSheet.create({
+    container: {
+      backgroundColor: theme.bgCard,
+      borderRadius: 10,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: theme.border,
+      gap: 12,
+    },
+    keyInfoRow: {
+      flexDirection: 'row',
+      gap: 10,
+    },
+    keyPrefixBox: {
+      flex: 1,
+    },
+    keyPrefixLabel: {
+      color: theme.textMuted,
+      fontSize: 11,
+      fontWeight: '600',
+      textTransform: 'uppercase',
+      marginBottom: 4,
+    },
+    keyPrefixValue: {
+      color: '#4ade80',
+      fontFamily: 'monospace',
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    lastUsedBox: {
+      alignItems: 'flex-end',
+    },
+    lastUsedLabel: {
+      color: theme.textMuted,
+      fontSize: 11,
+      fontWeight: '600',
+      textTransform: 'uppercase',
+      marginBottom: 4,
+    },
+    lastUsedValue: {
+      color: theme.textSecondary,
+      fontSize: 12,
+    },
+
+    // New key reveal
+    newKeySection: {
+      gap: 8,
+    },
+    warningCard: {
+      backgroundColor: '#1a0f00',
+      borderRadius: 8,
+      padding: 10,
+      borderWidth: 1,
+      borderColor: '#554400',
+      gap: 4,
+    },
+    warningTitle: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: '#ffaa00',
+    },
+    warningText: {
+      fontSize: 12,
+      color: theme.textSecondary,
+      lineHeight: 16,
+    },
+    keyBox: {
+      backgroundColor: theme.bg,
+      borderRadius: 8,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: '#00aa00',
+    },
+    keyText: {
+      fontFamily: 'monospace',
+      fontSize: 12,
+      color: '#00ff00',
+      lineHeight: 18,
+    },
+    copyButton: {
+      backgroundColor: theme.bgElevated,
+      borderRadius: 7,
+      padding: 10,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: theme.borderMedium,
+    },
+    copyButtonCopied: {
+      backgroundColor: '#001a00',
+      borderColor: '#00aa00',
+    },
+    copyButtonText: {
+      color: theme.textPrimary,
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    copyButtonTextCopied: {
+      color: '#00ff00',
+    },
+
+    // Action buttons
+    actionRow: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    regenerateButton: {
+      flex: 1,
+      backgroundColor: 'rgba(220,38,38,0.08)',
+      borderRadius: 7,
+      padding: 10,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: '#cc3333',
+      minHeight: 38,
+      justifyContent: 'center',
+    },
+    revokeButton: {
+      backgroundColor: 'transparent',
+      borderRadius: 7,
+      padding: 10,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: theme.borderMedium,
+      paddingHorizontal: 16,
+      minHeight: 38,
+      justifyContent: 'center',
+    },
+    regenerateButtonText: {
+      color: '#ff6666',
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    revokeButtonText: {
+      color: '#f87171',
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    buttonDisabled: {
+      opacity: 0.5,
+    },
+  }), [theme]);
 
   async function handleRegenerate() {
     Alert.alert(
@@ -213,149 +357,3 @@ export default function ApiKeyManager({
     </View>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
-
-const styles = StyleSheet.create({
-  container: {
-    backgroundColor: '#111',
-    borderRadius: 10,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#222',
-    gap: 12,
-  },
-  keyInfoRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  keyPrefixBox: {
-    flex: 1,
-  },
-  keyPrefixLabel: {
-    color: '#666',
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    marginBottom: 4,
-  },
-  keyPrefixValue: {
-    color: '#4ade80',
-    fontFamily: 'monospace',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  lastUsedBox: {
-    alignItems: 'flex-end',
-  },
-  lastUsedLabel: {
-    color: '#666',
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    marginBottom: 4,
-  },
-  lastUsedValue: {
-    color: '#aaa',
-    fontSize: 12,
-  },
-
-  // New key reveal
-  newKeySection: {
-    gap: 8,
-  },
-  warningCard: {
-    backgroundColor: '#1a0f00',
-    borderRadius: 8,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: '#554400',
-    gap: 4,
-  },
-  warningTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#ffaa00',
-  },
-  warningText: {
-    fontSize: 12,
-    color: '#aaa',
-    lineHeight: 16,
-  },
-  keyBox: {
-    backgroundColor: '#0a0a0a',
-    borderRadius: 8,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#00aa00',
-  },
-  keyText: {
-    fontFamily: 'monospace',
-    fontSize: 12,
-    color: '#00ff00',
-    lineHeight: 18,
-  },
-  copyButton: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 7,
-    padding: 10,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  copyButtonCopied: {
-    backgroundColor: '#001a00',
-    borderColor: '#00aa00',
-  },
-  copyButtonText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  copyButtonTextCopied: {
-    color: '#00ff00',
-  },
-
-  // Action buttons
-  actionRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  regenerateButton: {
-    flex: 1,
-    backgroundColor: '#3a0000',
-    borderRadius: 7,
-    padding: 10,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#cc3333',
-    minHeight: 38,
-    justifyContent: 'center',
-  },
-  revokeButton: {
-    backgroundColor: 'transparent',
-    borderRadius: 7,
-    padding: 10,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#442222',
-    paddingHorizontal: 16,
-    minHeight: 38,
-    justifyContent: 'center',
-  },
-  regenerateButtonText: {
-    color: '#ff6666',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  revokeButtonText: {
-    color: '#f87171',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  buttonDisabled: {
-    opacity: 0.5,
-  },
-});

@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import ConsequenceTag from './ConsequenceTag';
+import { useTheme } from '@/theme';
 
 interface ConsequenceItem {
   id: string;
@@ -20,6 +21,103 @@ function formatDateTime(ts: string): string {
 }
 
 export default function ImpactSummary({ consequences }: ImpactSummaryProps) {
+  const theme = useTheme();
+
+  const styles = useMemo(() => StyleSheet.create({
+    container: {
+      backgroundColor: theme.bgCard,
+      borderRadius: 10,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    emptyCard: {
+      backgroundColor: theme.bgCard,
+      borderRadius: 10,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: theme.border,
+      alignItems: 'center',
+    },
+    emptyText: {
+      color: theme.textMuted,
+      fontSize: 13,
+      fontStyle: 'italic',
+    },
+    summaryRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 10,
+      paddingBottom: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    summaryLabel: {
+      color: theme.textSecondary,
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    summaryDelta: {
+      color: theme.textSecondary,
+      fontSize: 16,
+      fontWeight: 'bold',
+    },
+    deltaPositive: {
+      color: '#4ade80',
+    },
+    deltaNegative: {
+      color: '#f87171',
+    },
+    typeRow: {
+      flexGrow: 0,
+      marginBottom: 10,
+    },
+    typeRowContent: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingBottom: 6,
+    },
+    typeChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginRight: 2,
+    },
+    countBadge: {
+      backgroundColor: theme.bgElevated,
+      borderRadius: 8,
+      minWidth: 18,
+      height: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginLeft: -4,
+      marginRight: 6,
+    },
+    countText: {
+      color: theme.textPrimary,
+      fontSize: 10,
+      fontWeight: '700',
+    },
+    list: {
+      gap: 6,
+    },
+    consequenceRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 2,
+    },
+    consequenceLeft: {
+      flex: 1,
+      marginRight: 8,
+    },
+    consequenceTime: {
+      color: theme.textMuted,
+      fontSize: 11,
+      flexShrink: 0,
+    },
+  }), [theme]);
+
   if (!consequences || consequences.length === 0) {
     return (
       <View style={styles.emptyCard}>
@@ -88,98 +186,3 @@ export default function ImpactSummary({ consequences }: ImpactSummaryProps) {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 10,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  emptyCard: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 10,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#333',
-    alignItems: 'center',
-  },
-  emptyText: {
-    color: '#555',
-    fontSize: 13,
-    fontStyle: 'italic',
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#222',
-  },
-  summaryLabel: {
-    color: '#888',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  summaryDelta: {
-    color: '#888',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  deltaPositive: {
-    color: '#4ade80',
-  },
-  deltaNegative: {
-    color: '#f87171',
-  },
-  typeRow: {
-    flexGrow: 0,
-    marginBottom: 10,
-  },
-  typeRowContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingBottom: 6,
-  },
-  typeChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginRight: 2,
-  },
-  countBadge: {
-    backgroundColor: '#333',
-    borderRadius: 8,
-    minWidth: 18,
-    height: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: -4,
-    marginRight: 6,
-  },
-  countText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  list: {
-    gap: 6,
-  },
-  consequenceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 2,
-  },
-  consequenceLeft: {
-    flex: 1,
-    marginRight: 8,
-  },
-  consequenceTime: {
-    color: '#555',
-    fontSize: 11,
-    flexShrink: 0,
-  },
-});

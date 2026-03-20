@@ -1,8 +1,10 @@
 // VoteButtons Component - Upvote/Downvote with synapse transfers
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, Pressable, Alert } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/auth.store';
+import { useTheme } from '@/theme';
 
 interface VoteButtonsProps {
   itemId: string;
@@ -23,47 +25,41 @@ export default function VoteButtons({
   const [optimisticUpvotes, setOptimisticUpvotes] = useState(upvotes);
   const [optimisticDownvotes, setOptimisticDownvotes] = useState(downvotes);
   const user = useAuthStore((s) => s.user);
+  const theme = useTheme();
 
-  // Sync optimistic state when props change (e.g. from realtime updates)
   useEffect(() => {
     setOptimisticUpvotes(upvotes);
     setOptimisticDownvotes(downvotes);
   }, [upvotes, downvotes]);
 
   const netVotes = optimisticUpvotes - optimisticDownvotes;
+  const isComment = itemType === 'comment';
 
   async function handleVote(direction: 1 | -1) {
     if (voting || !user) return;
-
     try {
       setVoting(true);
-
-      // Optimistic update
       if (direction === 1) {
         setOptimisticUpvotes(prev => prev + 1);
       } else {
         setOptimisticDownvotes(prev => prev + 1);
       }
-
-      // Call appropriate RPC with correct parameter names
       if (itemType === 'post') {
-        const { data, error: rpcError } = await supabase.rpc('vote_on_post', {
+        const { error: rpcError } = await supabase.rpc('vote_on_post', {
           p_user_id: user.id,
           p_post_id: itemId,
           p_direction: direction,
         });
         if (rpcError) throw rpcError;
       } else {
-        const { data, error: rpcError } = await supabase.rpc('vote_on_comment', {
+        const { error: rpcError } = await supabase.rpc('vote_on_comment', {
           p_user_id: user.id,
           p_comment_id: itemId,
           p_direction: direction,
         });
         if (rpcError) throw rpcError;
       }
-
     } catch (err: any) {
-      // Revert optimistic update
       if (direction === 1) {
         setOptimisticUpvotes(prev => prev - 1);
       } else {
@@ -82,86 +78,66 @@ export default function VoteButtons({
     }
   }
 
+  const pillHeight = isComment ? 32 : 36;
+  const touchSize = isComment ? 32 : 36;
+  const iconSize = isComment ? 16 : 18;
+
+  const styles = useMemo(() => StyleSheet.create({
+    pill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.bgElevated,
+      height: pillHeight,
+      borderRadius: 9999,
+      paddingHorizontal: 2,
+    },
+    touch: {
+      width: touchSize,
+      height: touchSize,
+      borderRadius: 9999,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    voteCount: {
+      color: theme.voteNeutral,
+      fontSize: isComment ? 12 : 14,
+      fontWeight: '600',
+      textAlign: 'center',
+      minWidth: isComment ? 18 : 20,
+    },
+    votePositive: {
+      color: theme.votePositive,
+    },
+    voteNegative: {
+      color: theme.voteNegative,
+    },
+  }), [theme, pillHeight, touchSize]);
+
   return (
-    <View style={styles.container}>
-      {/* Upvote Button */}
+    <View style={styles.pill}>
       <Pressable
-        style={[styles.button, styles.upvoteButton]}
+        style={styles.touch}
         onPress={() => handleVote(1)}
         disabled={voting}
       >
-        <Text style={styles.arrow}>▲</Text>
+        <Ionicons name="arrow-up" size={iconSize} color={theme.voteNeutral} />
       </Pressable>
 
-      {/* Vote Count */}
       <Text style={[
         styles.voteCount,
         netVotes > 0 && styles.votePositive,
-        netVotes < 0 && styles.voteNegative
+        netVotes < 0 && styles.voteNegative,
       ]}>
-        {netVotes > 0 ? '+' : ''}{netVotes}
+        {netVotes}
       </Text>
 
-      {/* Downvote Button */}
       <Pressable
-        style={[styles.button, styles.downvoteButton]}
+        style={styles.touch}
         onPress={() => handleVote(-1)}
         disabled={voting}
       >
-        <Text style={styles.arrow}>▼</Text>
+        <Ionicons name="arrow-down" size={iconSize} color={theme.voteNeutral} />
       </Pressable>
-
-      {/* Synapse Cost Indicator */}
-      <Text style={styles.costIndicator}>
-        {itemType === 'post' ? '10⚡' : '5⚡'}
-      </Text>
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  button: {
-    width: 32,
-    height: 32,
-    borderRadius: 4,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-  },
-  upvoteButton: {
-    borderColor: '#4ade80',
-    backgroundColor: 'rgba(74, 222, 128, 0.1)',
-  },
-  downvoteButton: {
-    borderColor: '#f87171',
-    backgroundColor: 'rgba(248, 113, 113, 0.1)',
-  },
-  arrow: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  voteCount: {
-    color: '#888',
-    fontSize: 16,
-    fontWeight: 'bold',
-    minWidth: 40,
-    textAlign: 'center',
-  },
-  votePositive: {
-    color: '#4ade80',
-  },
-  voteNegative: {
-    color: '#f87171',
-  },
-  costIndicator: {
-    color: '#666',
-    fontSize: 11,
-    marginLeft: 4,
-  },
-});

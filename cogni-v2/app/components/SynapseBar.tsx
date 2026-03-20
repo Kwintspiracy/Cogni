@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -7,18 +8,22 @@ import Animated, {
   withSequence,
   Easing,
 } from 'react-native-reanimated';
+import { useTheme } from '@/theme';
 
 interface SynapseBarProps {
   current: number;
   max?: number;
   size?: 'sm' | 'md' | 'lg';
   showLabel?: boolean;
+  roleColor?: string;
 }
 
-const HEIGHT_MAP = { sm: 6, md: 12, lg: 18 };
+const HEIGHT_MAP = { sm: 8, md: 8, lg: 10 };
 const FONT_MAP = { sm: 10, md: 13, lg: 16 };
 
-function getColor(percent: number): string {
+// End color is always cyan, start color is role color or fallback based on energy level
+function getStartColor(percent: number, roleColor?: string): string {
+  if (roleColor) return roleColor;
   if (percent > 50) return '#4ade80';
   if (percent > 20) return '#fbbf24';
   return '#f87171';
@@ -29,7 +34,9 @@ export default function SynapseBar({
   max = 10000,
   size = 'md',
   showLabel = true,
+  roleColor,
 }: SynapseBarProps) {
+  const theme = useTheme();
   const percent = Math.min((current / max) * 100, 100);
   const animPercent = useSharedValue(0);
   const glowOpacity = useSharedValue(0);
@@ -52,16 +59,16 @@ export default function SynapseBar({
   }, [percent, current]);
 
   const height = HEIGHT_MAP[size];
-  const color = getColor(percent);
+  const startColor = getStartColor(percent, roleColor);
 
   const fillStyle = useAnimatedStyle(() => ({
     width: `${animPercent.value}%`,
     height,
     borderRadius: height / 2,
-    backgroundColor: color,
     position: 'absolute' as const,
     left: 0,
     top: 0,
+    overflow: 'hidden',
   }));
 
   const glowStyle = useAnimatedStyle(() => ({
@@ -71,7 +78,7 @@ export default function SynapseBar({
     right: 0,
     bottom: -2,
     borderRadius: height / 2 + 2,
-    backgroundColor: '#4ade80',
+    backgroundColor: '#22d3ee',
     opacity: glowOpacity.value,
   }));
 
@@ -79,14 +86,21 @@ export default function SynapseBar({
     <View>
       {showLabel && (
         <View style={styles.labelRow}>
-          <Text style={[styles.label, { fontSize: FONT_MAP[size] }]}>
+          <Text style={[styles.label, { fontSize: FONT_MAP[size], color: startColor }]}>
             {current} Synapses
           </Text>
         </View>
       )}
-      <View style={[styles.track, { height, borderRadius: height / 2 }]}>
+      <View style={[styles.track, { height, borderRadius: height / 2, backgroundColor: theme.synapseTrack }]}>
         <Animated.View style={glowStyle} />
-        <Animated.View style={fillStyle} />
+        <Animated.View style={fillStyle}>
+          <LinearGradient
+            colors={[startColor, '#22d3ee']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={{ flex: 1 }}
+          />
+        </Animated.View>
       </View>
     </View>
   );
@@ -96,14 +110,12 @@ const styles = StyleSheet.create({
   labelRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   label: {
-    color: '#fbbf24',
-    fontWeight: 'bold',
+    fontWeight: '600',
   },
   track: {
-    backgroundColor: '#222',
     overflow: 'hidden',
   },
 });

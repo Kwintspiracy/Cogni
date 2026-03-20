@@ -1,5 +1,5 @@
 // Agents Screen - Display the current user's agents with archetype visualization
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, FlatList, RefreshControl, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
@@ -8,9 +8,11 @@ import EcosystemMap from '@/components/EcosystemMap';
 import { useAgentsStore } from '@/stores/agents.store';
 import { useAuthStore } from '@/stores/auth.store';
 import { subscribeToAgents, unsubscribe } from '@/services/realtime.service';
+import { useTheme, palette } from '@/theme';
 
 export default function Agents() {
   const router = useRouter();
+  const theme = useTheme();
   const { myAgents, isLoading, fetchMyAgents, updateAgent } = useAgentsStore();
   const user = useAuthStore((s) => s.user);
   const [refreshing, setRefreshing] = useState(false);
@@ -34,6 +36,81 @@ export default function Agents() {
     if (user?.id) fetchMyAgents(user.id);
     setRefreshing(false);
   }, [fetchMyAgents, user]);
+
+  const styles = useMemo(() => StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.bg,
+    },
+    header: {
+      backgroundColor: theme.bg,
+      padding: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    headerRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    headerTitle: {
+      color: theme.textPrimary,
+      fontSize: 20,
+      fontWeight: '700',
+      marginBottom: 4,
+    },
+    headerSubtitle: {
+      color: theme.textMuted,
+      fontSize: 13,
+    },
+    createButton: {
+      backgroundColor: theme.createBg,
+      borderRadius: 14,
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+    },
+    createButtonText: {
+      color: '#fff',
+      fontSize: 14,
+      fontWeight: '700',
+    },
+    listContent: {
+      padding: 16,
+    },
+    ecosystemMapWrapper: {
+      marginBottom: 16,
+    },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: 12,
+    },
+    loadingText: {
+      color: theme.textMuted,
+      fontSize: 14,
+    },
+    emptyContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 40,
+    },
+    emptyText: {
+      color: theme.textPrimary,
+      fontSize: 18,
+      fontWeight: 'bold',
+      marginBottom: 8,
+    },
+    emptySubtext: {
+      color: theme.textMuted,
+      fontSize: 14,
+      textAlign: 'center',
+    },
+    emptyList: {
+      flex: 1,
+    },
+  }), [theme]);
 
   const renderEmpty = () => (
     <View style={styles.emptyContainer}>
@@ -67,7 +144,7 @@ export default function Agents() {
       {/* Agent List */}
       {isLoading && !refreshing ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#60a5fa" />
+          <ActivityIndicator size="large" color={palette.blue} />
           <Text style={styles.loadingText}>Loading agents...</Text>
         </View>
       ) : (
@@ -89,8 +166,8 @@ export default function Agents() {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              tintColor="#60a5fa"
-              colors={['#60a5fa']}
+              tintColor={palette.blue}
+              colors={[palette.blue]}
             />
           }
           contentContainerStyle={[
@@ -102,78 +179,3 @@ export default function Agents() {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  header: {
-    backgroundColor: '#111',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#222',
-  },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  headerTitle: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  headerSubtitle: {
-    color: '#888',
-    fontSize: 13,
-  },
-  createButton: {
-    backgroundColor: '#00ff00',
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  createButtonText: {
-    color: '#000',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  listContent: {
-    padding: 16,
-  },
-  ecosystemMapWrapper: {
-    marginBottom: 16,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 12,
-  },
-  loadingText: {
-    color: '#888',
-    fontSize: 14,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 40,
-  },
-  emptyText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 8,
-  },
-  emptySubtext: {
-    color: '#888',
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  emptyList: {
-    flex: 1,
-  },
-});

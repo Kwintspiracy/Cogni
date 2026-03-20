@@ -1,5 +1,5 @@
 // Feed Screen - Display agent posts with Hot/New/Top tabs
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, FlatList, Pressable, RefreshControl, ActivityIndicator, ScrollView } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
@@ -14,6 +14,7 @@ import PostCard from '@/components/PostCard';
 import EventCardBanner from '@/components/EventCardBanner';
 import WorldBriefCard from '@/components/WorldBriefCard';
 import WorldEventCard, { WorldEvent } from '@/components/WorldEventCard';
+import { useTheme, palette } from '@/theme';
 
 interface Post {
   id: string;
@@ -101,6 +102,7 @@ function feedPostToPost(fp: FeedPost): Post {
 }
 
 export default function Feed() {
+  const theme = useTheme();
   const { posts, isLoading, sortMode, selectedCommunity, setSortMode, setSelectedCommunity, fetchPosts, addPost, updatePost, myAgentsFilter, myAgentIds, setMyAgentIds, toggleMyAgentsFilter, subscribeToExplanations, unsubscribeFromExplanations } = useFeedStore();
   const { user } = useAuthStore();
   const { myAgents, fetchMyAgents } = useAgentsStore();
@@ -216,6 +218,162 @@ export default function Feed() {
 
   const mappedPosts = posts.map(feedPostToPost);
 
+  const styles = useMemo(() => StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.bg,
+    },
+    tabBar: {
+      flexDirection: 'row',
+      backgroundColor: theme.bg,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    tab: {
+      flex: 1,
+      paddingVertical: 14,
+      alignItems: 'center',
+      borderBottomWidth: 2,
+      borderBottomColor: 'transparent',
+    },
+    tabActive: {
+      borderBottomColor: theme.tabActive,
+    },
+    tabText: {
+      color: theme.tabInactive,
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    tabTextActive: {
+      color: theme.textPrimary,
+    },
+    newPostsBanner: {
+      backgroundColor: 'rgba(142,81,255,0.15)',
+      paddingVertical: 10,
+      alignItems: 'center',
+    },
+    newPostsText: {
+      color: theme.statusRisingText,
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: 12,
+    },
+    loadingText: {
+      color: theme.textMuted,
+      fontSize: 14,
+    },
+    emptyContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 40,
+    },
+    emptyText: {
+      color: theme.textPrimary,
+      fontSize: 18,
+      fontWeight: 'bold',
+      marginBottom: 8,
+    },
+    emptySubtext: {
+      color: theme.textMuted,
+      fontSize: 14,
+      textAlign: 'center',
+    },
+    emptyList: {
+      flex: 1,
+    },
+    communityBar: {
+      backgroundColor: theme.bg,
+      flexGrow: 0,
+      flexShrink: 0,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    communityBarContent: {
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      gap: 8,
+      alignItems: 'center',
+    },
+    communityChip: {
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      borderRadius: 18,
+      backgroundColor: theme.bgCard,
+      borderWidth: 1,
+      borderColor: theme.borderSubtle,
+    },
+    communityChipActive: {
+      backgroundColor: 'rgba(142,81,255,0.15)',
+      borderColor: theme.tabActive,
+    },
+    communityChipText: {
+      color: theme.tabInactive,
+      fontSize: 14,
+      fontWeight: '500',
+    },
+    communityChipTextActive: {
+      color: theme.textPrimary,
+    },
+    myAgentsChip: {
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      borderRadius: 18,
+      backgroundColor: theme.bgCard,
+      borderWidth: 1,
+      borderColor: theme.borderSubtle,
+    },
+    myAgentsChipActive: {
+      backgroundColor: 'rgba(16,185,129,0.15)',
+      borderColor: '#10b981',
+    },
+    myAgentsChipText: {
+      color: theme.tabInactive,
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    myAgentsChipTextActive: {
+      color: theme.votePositive,
+    },
+    sectionDivider: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      backgroundColor: theme.bg,
+      gap: 8,
+    },
+    sectionDividerLine: {
+      flex: 1,
+      height: 1,
+      backgroundColor: theme.border,
+    },
+    sectionDividerText: {
+      color: theme.textFaint,
+      fontSize: 11,
+      fontWeight: '600',
+      letterSpacing: 0.5,
+    },
+    worldEventsSection: {
+      paddingHorizontal: 16,
+      paddingTop: 12,
+      paddingBottom: 4,
+    },
+    worldEventsSectionTitle: {
+      color: theme.textMuted,
+      fontSize: 11,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+      marginBottom: 10,
+    },
+  }), [theme]);
+
   const renderEmpty = () => (
     <View style={styles.emptyContainer}>
       <Text style={styles.emptyText}>No posts yet</Text>
@@ -239,13 +397,10 @@ export default function Feed() {
         <PostCard post={item} myAgentIds={myAgentIds} />
       </Animated.View>
     );
-  }, [myAgentIds, mappedPosts]);
+  }, [myAgentIds, mappedPosts, styles]);
 
   return (
     <View style={styles.container}>
-      {/* Event Card Banner */}
-      <EventCardBanner />
-
       {/* Community Selector */}
       <ScrollView
         horizontal
@@ -314,7 +469,7 @@ export default function Feed() {
       {/* Post List */}
       {isLoading && !refreshing ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#60a5fa" />
+          <ActivityIndicator size="large" color={palette.blue} />
           <Text style={styles.loadingText}>Loading posts...</Text>
         </View>
       ) : (
@@ -347,8 +502,8 @@ export default function Feed() {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              tintColor="#60a5fa"
-              colors={['#60a5fa']}
+              tintColor={palette.blue}
+              colors={[palette.blue]}
             />
           }
           contentContainerStyle={mappedPosts.length === 0 ? styles.emptyList : undefined}
@@ -357,157 +512,3 @@ export default function Feed() {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  tabBar: {
-    flexDirection: 'row',
-    backgroundColor: '#111',
-    borderBottomWidth: 1,
-    borderBottomColor: '#222',
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 16,
-    alignItems: 'center',
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-  },
-  tabActive: {
-    borderBottomColor: '#60a5fa',
-  },
-  tabText: {
-    color: '#888',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  tabTextActive: {
-    color: '#60a5fa',
-  },
-  newPostsBanner: {
-    backgroundColor: '#1e3a8a',
-    paddingVertical: 10,
-    alignItems: 'center',
-  },
-  newPostsText: {
-    color: '#93c5fd',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 12,
-  },
-  loadingText: {
-    color: '#888',
-    fontSize: 14,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 40,
-  },
-  emptyText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 8,
-  },
-  emptySubtext: {
-    color: '#888',
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  emptyList: {
-    flex: 1,
-  },
-  communityBar: {
-    backgroundColor: '#111',
-    flexGrow: 0,
-    flexShrink: 0,
-  },
-  communityBarContent: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    gap: 8,
-    alignItems: 'center',
-  },
-  communityChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: '#1a1a1a',
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  communityChipActive: {
-    backgroundColor: '#1e3a8a',
-    borderColor: '#3b82f6',
-  },
-  communityChipText: {
-    color: '#888',
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  communityChipTextActive: {
-    color: '#93c5fd',
-  },
-  myAgentsChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: '#1a1a1a',
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  myAgentsChipActive: {
-    backgroundColor: '#052e16',
-    borderColor: '#16a34a',
-  },
-  myAgentsChipText: {
-    color: '#888',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  myAgentsChipTextActive: {
-    color: '#4ade80',
-  },
-  sectionDivider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: '#000',
-    gap: 8,
-  },
-  sectionDividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#333',
-  },
-  sectionDividerText: {
-    color: '#555',
-    fontSize: 11,
-    fontWeight: '600',
-    letterSpacing: 0.5,
-  },
-  worldEventsSection: {
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 4,
-  },
-  worldEventsSectionTitle: {
-    color: '#888',
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: 10,
-  },
-});

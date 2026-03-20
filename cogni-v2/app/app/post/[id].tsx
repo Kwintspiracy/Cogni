@@ -1,13 +1,16 @@
 // Post Detail Screen - View full post with comments
-import { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable } from 'react-native';
+import { useState, useEffect, useMemo } from 'react';
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable, Alert } from 'react-native';
 import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
 import { subscribeToComments, subscribeToPostUpdates, unsubscribe } from '@/services/realtime.service';
 import CommentThread from '@/components/CommentThread';
 import VoteButtons from '@/components/VoteButtons';
 import RichText from '@/components/RichText';
 import { ExplanationTagRow } from '@/components/ExplanationTagRow';
+import { useTheme, getAvatarColor, palette } from '@/theme';
+import { useAuthStore } from '@/stores/auth.store';
 
 interface Post {
   id: string;
@@ -57,16 +60,11 @@ interface Comment {
   };
 }
 
-const AVATAR_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
-function getAvatarColor(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
-
 export default function PostDetail() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
+  const theme = useTheme();
+  const user = useAuthStore((s) => s.user);
   const [post, setPost] = useState<Post | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -178,11 +176,246 @@ export default function PostDetail() {
     }
   }
 
+  const handleVote = async (direction: 1 | -1) => {
+    if (!user || !post) return;
+    try {
+      const { error } = await supabase.rpc('vote_on_post', {
+        p_user_id: user.id,
+        p_post_id: post.id,
+        p_direction: direction,
+      });
+      if (error) throw error;
+    } catch (err: any) {
+      const msg = err?.message ?? '';
+      if (msg.includes('already voted')) {
+        Alert.alert('Already Voted', 'You have already voted on this post');
+      } else {
+        Alert.alert('Error', msg || 'Failed to vote');
+      }
+    }
+  };
+
+  const styles = useMemo(() => StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.bg,
+    },
+    scrollView: {
+      flex: 1,
+    },
+    loadingContainer: {
+      flex: 1,
+      backgroundColor: theme.bg,
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: 12,
+    },
+    loadingText: {
+      color: theme.textMuted,
+      fontSize: 14,
+    },
+    errorContainer: {
+      flex: 1,
+      backgroundColor: theme.bg,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    errorText: {
+      color: '#f87171',
+      fontSize: 16,
+    },
+    postContainer: {
+      padding: 20,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    postHeader: {
+      marginBottom: 12,
+    },
+    headerTopRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 4,
+      flexWrap: 'wrap',
+    },
+    avatar: {
+      width: 24,
+      height: 24,
+      borderRadius: 9999,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    avatarText: {
+      color: '#fff',
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    agentNameLink: {
+      color: theme.textPrimary,
+      fontSize: 15,
+      fontWeight: '600',
+    },
+    roleBadge: {
+      backgroundColor: 'rgba(142,81,255,0.13)',
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      borderRadius: 6,
+    },
+    roleText: {
+      color: theme.statusRisingText,
+      fontSize: 10,
+      fontWeight: '600',
+      textTransform: 'uppercase',
+      letterSpacing: 0.4,
+    },
+    headerDot: {
+      color: theme.textFaint,
+      fontSize: 13,
+    },
+    timestamp: {
+      color: theme.textMuted,
+      fontSize: 12,
+    },
+    communityTag: {
+      color: theme.tabActive,
+      fontSize: 13,
+      fontWeight: '500',
+      marginBottom: 4,
+    },
+    explanationRow: {
+      marginBottom: 12,
+    },
+    title: {
+      color: theme.textPrimary,
+      fontSize: 16,
+      fontWeight: 'bold',
+      marginBottom: 12,
+      lineHeight: 22,
+    },
+    content: {
+      color: theme.textSecondary,
+      fontSize: 14,
+      lineHeight: 20,
+      marginBottom: 16,
+    },
+    importanceReason: {
+      color: theme.importanceText,
+      fontSize: 13,
+      fontStyle: 'italic',
+      marginBottom: 8,
+    },
+    consequencePreview: {
+      color: 'rgba(255,185,0,0.8)',
+      fontSize: 13,
+      marginBottom: 8,
+    },
+    memoryInfluence: {
+      color: theme.statusRisingText,
+      fontSize: 13,
+      fontStyle: 'italic',
+      marginBottom: 8,
+    },
+    signatureBadge: {
+      alignSelf: 'flex-start',
+      backgroundColor: 'rgba(255,185,0,0.1)',
+      borderRadius: 20,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      marginBottom: 12,
+    },
+    signatureText: {
+      color: 'rgba(255,185,0,0.9)',
+      fontSize: 12,
+      fontStyle: 'italic',
+    },
+    // Bottom action bar
+    bottomBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingTop: 14,
+      borderTopWidth: 1,
+      borderTopColor: theme.border,
+      gap: 10,
+    },
+    votePill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.bgElevated,
+      height: 36,
+      borderRadius: 9999,
+      paddingHorizontal: 2,
+    },
+    voteTouch: {
+      width: 36,
+      height: 36,
+      borderRadius: 9999,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    voteCount: {
+      color: theme.voteNeutral,
+      fontSize: 14,
+      fontWeight: '600',
+      minWidth: 28,
+      textAlign: 'center',
+    },
+    votePositive: {
+      color: theme.votePositive,
+    },
+    voteNegative: {
+      color: theme.voteNegative,
+    },
+    separator: {
+      width: 1,
+      height: 20,
+      backgroundColor: theme.borderSubtle,
+    },
+    commentChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+    },
+    commentCountText: {
+      color: 'rgba(255,185,0,0.8)',
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    iconTouch: {
+      width: 32,
+      height: 32,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    rightActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      marginLeft: 'auto',
+    },
+    commentsSection: {
+      padding: 20,
+    },
+    commentsHeader: {
+      color: theme.textPrimary,
+      fontSize: 16,
+      fontWeight: '500',
+      marginBottom: 16,
+    },
+    noComments: {
+      color: theme.textFaint,
+      fontSize: 14,
+      fontStyle: 'italic',
+      textAlign: 'center',
+      paddingVertical: 32,
+    },
+  }), [theme]);
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
         <Stack.Screen options={{ title: 'Loading...' }} />
-        <ActivityIndicator size="large" color="#60a5fa" />
+        <ActivityIndicator size="large" color={palette.purple} />
         <Text style={styles.loadingText}>Loading post...</Text>
       </View>
     );
@@ -202,6 +435,9 @@ export default function PostDetail() {
     ? post.post_explanations[0]
     : post.post_explanations;
 
+  const netVotes = post.upvotes - post.downvotes;
+  const avatarColor = getAvatarColor(post.agents.designation);
+
   return (
     <View style={styles.container}>
       <Stack.Screen options={{ title: post.title }} />
@@ -210,21 +446,16 @@ export default function PostDetail() {
         {/* Post Content */}
         <View style={styles.postContainer}>
 
-          {/* Post Header — aligned with feed cards */}
+          {/* Post Header */}
           <View style={styles.postHeader}>
             {/* Avatar + Agent + Role + Timestamp row */}
             <View style={styles.headerTopRow}>
-              <View style={[styles.avatar, { backgroundColor: getAvatarColor(post.agents.designation) }]}>
+              <View style={[styles.avatar, { backgroundColor: avatarColor }]}>
                 <Text style={styles.avatarText}>{post.agents.designation.charAt(0).toUpperCase()}</Text>
               </View>
               <Pressable onPress={() => router.push(`/agent-dashboard/${post.agents.id}` as any)}>
                 <Text style={styles.agentNameLink}>a/{post.agents.designation}</Text>
               </Pressable>
-              {post.agents.role && (
-                <View style={styles.roleBadge}>
-                  <Text style={styles.roleText}>{post.agents.role}</Text>
-                </View>
-              )}
               <Text style={styles.headerDot}>&middot;</Text>
               <Text style={styles.timestamp}>{formatTimestamp(post.created_at)}</Text>
             </View>
@@ -272,15 +503,40 @@ export default function PostDetail() {
             </View>
           )}
 
-          {/* Vote Buttons */}
-          <View style={styles.voteSection}>
-            <VoteButtons
-              itemId={post.id}
-              itemType="post"
-              upvotes={post.upvotes}
-              downvotes={post.downvotes}
-              onVoteChange={() => {}}
-            />
+          {/* Bottom action bar */}
+          <View style={styles.bottomBar}>
+            {/* Vote pill */}
+            <View style={styles.votePill}>
+              <Pressable style={styles.voteTouch} onPress={() => handleVote(1)}>
+                <Ionicons name="arrow-up" size={18} color={theme.voteNeutral} />
+              </Pressable>
+              <Text style={[
+                styles.voteCount,
+                netVotes > 0 && styles.votePositive,
+                netVotes < 0 && styles.voteNegative,
+              ]}>
+                {netVotes > 0 ? '+' : ''}{netVotes}
+              </Text>
+              <Pressable style={styles.voteTouch} onPress={() => handleVote(-1)}>
+                <Ionicons name="arrow-down" size={18} color={theme.voteNeutral} />
+              </Pressable>
+            </View>
+
+            <View style={styles.separator} />
+
+            <View style={styles.commentChip}>
+              <Text style={styles.commentCountText}>{post.comment_count} </Text>
+              <Text style={{ fontSize: 12, color: 'rgba(255,185,0,0.8)' }}>⚡</Text>
+            </View>
+
+            <View style={styles.rightActions}>
+              <Pressable style={styles.iconTouch}>
+                <Ionicons name="bookmark-outline" size={16} color={theme.textMuted} />
+              </Pressable>
+              <Pressable style={styles.iconTouch}>
+                <Ionicons name="share-outline" size={16} color={theme.textMuted} />
+              </Pressable>
+            </View>
           </View>
         </View>
 
@@ -315,160 +571,3 @@ function formatTimestamp(timestamp: string): string {
   if (diffDays < 7) return `${diffDays}d ago`;
   return postTime.toLocaleDateString();
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  scrollView: {
-    flex: 1,
-  },
-  loadingContainer: {
-    flex: 1,
-    backgroundColor: '#000',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 12,
-  },
-  loadingText: {
-    color: '#888',
-    fontSize: 14,
-  },
-  errorContainer: {
-    flex: 1,
-    backgroundColor: '#000',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  errorText: {
-    color: '#f87171',
-    fontSize: 16,
-  },
-  postContainer: {
-    backgroundColor: '#111',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#222',
-  },
-  postHeader: {
-    marginBottom: 12,
-  },
-  headerTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 4,
-    flexWrap: 'wrap',
-  },
-  avatar: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  agentNameLink: {
-    color: '#60a5fa',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  roleBadge: {
-    backgroundColor: '#1e3a8a',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  roleText: {
-    color: '#93c5fd',
-    fontSize: 10,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-  },
-  headerDot: {
-    color: '#555',
-    fontSize: 13,
-  },
-  timestamp: {
-    color: '#666',
-    fontSize: 12,
-  },
-  communityTag: {
-    color: '#8b5cf6',
-    fontSize: 13,
-    fontWeight: '500',
-    marginBottom: 4,
-  },
-  explanationRow: {
-    marginBottom: 12,
-  },
-  title: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 16,
-    lineHeight: 28,
-  },
-  content: {
-    color: '#ddd',
-    fontSize: 15,
-    lineHeight: 22,
-    marginBottom: 20,
-  },
-  importanceReason: {
-    color: '#888',
-    fontSize: 13,
-    fontStyle: 'italic',
-    marginBottom: 8,
-  },
-  consequencePreview: {
-    color: '#fbbf24',
-    fontSize: 13,
-    marginBottom: 8,
-  },
-  memoryInfluence: {
-    color: '#a78bfa',
-    fontSize: 13,
-    fontStyle: 'italic',
-    marginBottom: 8,
-  },
-  signatureBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#1a1a2e',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    marginBottom: 12,
-  },
-  signatureText: {
-    color: '#9ca3af',
-    fontSize: 12,
-    fontStyle: 'italic',
-  },
-  voteSection: {
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#222',
-  },
-  commentsSection: {
-    padding: 20,
-  },
-  commentsHeader: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 16,
-  },
-  noComments: {
-    color: '#666',
-    fontSize: 14,
-    fontStyle: 'italic',
-    textAlign: 'center',
-    paddingVertical: 32,
-  },
-});

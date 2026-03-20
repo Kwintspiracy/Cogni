@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { getAgents, Agent } from '@/services/agent.service';
+import { useTheme, Theme } from '@/theme';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,17 +60,18 @@ function getBubbleSize(synapses: number, maxSynapses: number): number {
 interface AgentBubbleProps {
   agent: Agent;
   size: number;
+  theme: Theme;
   onPress: () => void;
 }
 
-function AgentBubble({ agent, size, onPress }: AgentBubbleProps) {
+function AgentBubble({ agent, size, theme, onPress }: AgentBubbleProps) {
   const color = getMomentumColor(agent.momentum_state);
   const fontSize = size <= 52 ? 9 : size <= 68 ? 10 : 11;
 
   return (
     <Pressable
       style={({ pressed }) => [
-        styles.bubble,
+        staticStyles.bubble,
         {
           width: size,
           height: size,
@@ -82,14 +84,14 @@ function AgentBubble({ agent, size, onPress }: AgentBubbleProps) {
       android_ripple={{ color: `${color}33` }}
     >
       {/* Synapse count */}
-      <Text style={[styles.bubbleSynapses, { fontSize: fontSize - 1, color: `${color}cc` }]}>
+      <Text style={[staticStyles.bubbleSynapses, { fontSize: fontSize - 1, color: `${color}cc` }]}>
         {agent.synapses >= 1000
           ? `${(agent.synapses / 1000).toFixed(1)}k`
           : String(agent.synapses)}
       </Text>
       {/* Designation — trim if too long for bubble */}
       <Text
-        style={[styles.bubbleName, { fontSize, color: '#fff' }]}
+        style={[staticStyles.bubbleName, { fontSize, color: theme.textPrimary }]}
         numberOfLines={2}
       >
         {agent.designation.length > 10 && size < 64
@@ -104,11 +106,11 @@ function AgentBubble({ agent, size, onPress }: AgentBubbleProps) {
 // Legend entry
 // ---------------------------------------------------------------------------
 
-function LegendDot({ color, label }: { color: string; label: string }) {
+function LegendDot({ color, label, theme }: { color: string; label: string; theme: Theme }) {
   return (
-    <View style={styles.legendItem}>
-      <View style={[styles.legendDot, { backgroundColor: color }]} />
-      <Text style={styles.legendLabel}>{label}</Text>
+    <View style={staticStyles.legendItem}>
+      <View style={[staticStyles.legendDot, { backgroundColor: color }]} />
+      <Text style={[staticStyles.legendLabel, { color: theme.textMuted }]}>{label}</Text>
     </View>
   );
 }
@@ -132,10 +134,13 @@ export default function EcosystemMap({
   maxHeight = 420,
 }: EcosystemMapProps) {
   const router = useRouter();
+  const theme = useTheme();
   const [agents, setAgents] = useState<Agent[]>(propAgents ?? []);
   const [loading, setLoading] = useState(autoFetch && !propAgents);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const styles = useMemo(() => makeStyles(theme), [theme]);
 
   const loadAgents = useCallback(async (showRefresh = false) => {
     try {
@@ -201,10 +206,10 @@ export default function EcosystemMap({
 
       {/* Legend */}
       <View style={styles.legend}>
-        <LegendDot color="#4ade80" label="Rising" />
-        <LegendDot color="#6b7280" label="Stable" />
-        <LegendDot color="#f59e0b" label="Dormant" />
-        <LegendDot color="#f87171" label="Declining" />
+        <LegendDot color="#4ade80" label="Rising" theme={theme} />
+        <LegendDot color="#6b7280" label="Stable" theme={theme} />
+        <LegendDot color="#f59e0b" label="Dormant" theme={theme} />
+        <LegendDot color="#f87171" label="Declining" theme={theme} />
       </View>
       <Text style={styles.legendHint}>Bubble size = synapse count · Tap to open dashboard</Text>
 
@@ -229,6 +234,7 @@ export default function EcosystemMap({
                 key={agent.id}
                 agent={agent}
                 size={size}
+                theme={theme}
                 onPress={() => router.push(`/agent-dashboard/${agent.id}` as any)}
               />
             );
@@ -243,7 +249,7 @@ export default function EcosystemMap({
           if (count === 0) return null;
           return (
             <View key={state} style={styles.statusChip}>
-              <View style={[styles.statusDot, { backgroundColor: getMomentumColor(state) }]} />
+              <View style={[staticStyles.statusDot, { backgroundColor: getMomentumColor(state) }]} />
               <Text style={styles.statusCount}>{count}</Text>
               <Text style={styles.statusLabel}>{getMomentumLabel(state)}</Text>
             </View>
@@ -258,111 +264,7 @@ export default function EcosystemMap({
 // Styles
 // ---------------------------------------------------------------------------
 
-const styles = StyleSheet.create({
-  container: {
-    backgroundColor: '#111',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#222',
-    overflow: 'hidden',
-  },
-  center: {
-    backgroundColor: '#111',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#222',
-    padding: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  loadingText: {
-    color: '#666',
-    fontSize: 13,
-    marginTop: 8,
-  },
-  errorText: {
-    color: '#f87171',
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  retryButton: {
-    marginTop: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: '#1a1a1a',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  retryText: {
-    color: '#888',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  emptyText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  emptySubtext: {
-    color: '#666',
-    fontSize: 13,
-    textAlign: 'center',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 6,
-  },
-  headerTitle: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '700',
-    letterSpacing: 0.3,
-  },
-  headerMeta: {
-    color: '#666',
-    fontSize: 12,
-  },
-  legend: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    paddingHorizontal: 16,
-    gap: 12,
-    marginBottom: 2,
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-  },
-  legendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  legendLabel: {
-    color: '#888',
-    fontSize: 11,
-  },
-  legendHint: {
-    color: '#444',
-    fontSize: 10,
-    paddingHorizontal: 16,
-    marginBottom: 10,
-  },
-  bubblesGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    paddingHorizontal: 12,
-    paddingBottom: 12,
-    gap: 10,
-    alignItems: 'center',
-  },
+const staticStyles = StyleSheet.create({
   bubble: {
     borderWidth: 1.5,
     alignItems: 'center',
@@ -379,37 +281,145 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     letterSpacing: -0.2,
   },
-  statusStrip: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#1a1a1a',
-    backgroundColor: '#0d0d0d',
-  },
-  statusChip: {
+  legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: '#1a1a1a',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 20,
+  },
+  legendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  legendLabel: {
+    fontSize: 11,
   },
   statusDot: {
     width: 7,
     height: 7,
     borderRadius: 3.5,
   },
-  statusCount: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  statusLabel: {
-    color: '#888',
-    fontSize: 11,
-  },
 });
+
+function makeStyles(theme: Theme) {
+  return {
+    container: {
+      backgroundColor: theme.bgCard,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: theme.border,
+      overflow: 'hidden' as const,
+    },
+    center: {
+      backgroundColor: theme.bgCard,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: theme.border,
+      padding: 32,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+      gap: 8,
+    },
+    loadingText: {
+      color: theme.textMuted,
+      fontSize: 13,
+      marginTop: 8,
+    },
+    errorText: {
+      color: '#f87171',
+      fontSize: 14,
+      textAlign: 'center' as const,
+    },
+    retryButton: {
+      marginTop: 8,
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      backgroundColor: theme.bgElevated,
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: theme.borderMedium,
+    },
+    retryText: {
+      color: theme.textSecondary,
+      fontSize: 13,
+      fontWeight: '600' as const,
+    },
+    emptyText: {
+      color: theme.textPrimary,
+      fontSize: 16,
+      fontWeight: '600' as const,
+    },
+    emptySubtext: {
+      color: theme.textMuted,
+      fontSize: 13,
+      textAlign: 'center' as const,
+    },
+    header: {
+      flexDirection: 'row' as const,
+      justifyContent: 'space-between' as const,
+      alignItems: 'center' as const,
+      paddingHorizontal: 16,
+      paddingTop: 14,
+      paddingBottom: 6,
+    },
+    headerTitle: {
+      color: theme.textPrimary,
+      fontSize: 14,
+      fontWeight: '700' as const,
+      letterSpacing: 0.3,
+    },
+    headerMeta: {
+      color: theme.textMuted,
+      fontSize: 12,
+    },
+    legend: {
+      flexDirection: 'row' as const,
+      flexWrap: 'wrap' as const,
+      paddingHorizontal: 16,
+      gap: 12,
+      marginBottom: 2,
+    },
+    legendHint: {
+      color: theme.textFaint,
+      fontSize: 10,
+      paddingHorizontal: 16,
+      marginBottom: 10,
+    },
+    bubblesGrid: {
+      flexDirection: 'row' as const,
+      flexWrap: 'wrap' as const,
+      paddingHorizontal: 12,
+      paddingBottom: 12,
+      gap: 10,
+      alignItems: 'center' as const,
+    },
+    statusStrip: {
+      flexDirection: 'row' as const,
+      flexWrap: 'wrap' as const,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      gap: 8,
+      borderTopWidth: 1,
+      borderTopColor: theme.border,
+      backgroundColor: theme.bg,
+    },
+    statusChip: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: 5,
+      backgroundColor: theme.bgElevated,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 20,
+    },
+    statusCount: {
+      color: theme.textPrimary,
+      fontSize: 12,
+      fontWeight: '700' as const,
+    },
+    statusLabel: {
+      color: theme.textSecondary,
+      fontSize: 11,
+    },
+  };
+}

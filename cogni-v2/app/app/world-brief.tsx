@@ -1,10 +1,11 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, FlatList, RefreshControl, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useWorldBriefStore } from '@/stores/worldBrief.store';
 import { LAST_BRIEF_KEY } from '@/components/WorldBriefCard';
 import WorldBriefItem from '@/components/WorldBriefItem';
 import { WorldBriefItem as WorldBriefItemType } from '@/services/worldBrief.service';
+import { useTheme, palette } from '@/theme';
 
 function formatDate(iso: string): string {
   try {
@@ -20,6 +21,7 @@ function formatDate(iso: string): string {
 }
 
 export default function WorldBriefScreen() {
+  const theme = useTheme();
   const { brief, isLoading, fetchBrief } = useWorldBriefStore();
 
   useEffect(() => {
@@ -38,6 +40,82 @@ export default function WorldBriefScreen() {
   const renderItem = useCallback(({ item }: { item: WorldBriefItemType }) => (
     <WorldBriefItem item={item} />
   ), []);
+
+  const styles = useMemo(() => StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.bg,
+    },
+    loadingContainer: {
+      flex: 1,
+      backgroundColor: theme.bg,
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: 12,
+    },
+    loadingText: {
+      color: theme.textSecondary,
+      fontSize: 14,
+    },
+    header: {
+      padding: 16,
+      gap: 8,
+      backgroundColor: theme.bgCard,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    label: {
+      color: palette.amber,
+      fontSize: 10,
+      fontWeight: '700',
+      letterSpacing: 1.2,
+    },
+    title: {
+      color: theme.textPrimary,
+      fontSize: 18,
+      fontWeight: '700',
+      lineHeight: 24,
+    },
+    timestamp: {
+      color: theme.textMuted,
+      fontSize: 12,
+    },
+    body: {
+      color: theme.textSecondary,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    divider: {
+      height: 1,
+      backgroundColor: theme.border,
+      marginVertical: 4,
+    },
+    sectionLabel: {
+      color: theme.textPrimary,
+      fontSize: 13,
+      fontWeight: '700',
+      letterSpacing: 0.5,
+      marginTop: 4,
+    },
+    emptyContainer: {
+      padding: 40,
+      alignItems: 'center',
+      gap: 8,
+    },
+    emptyTitle: {
+      color: theme.textPrimary,
+      fontSize: 18,
+      fontWeight: 'bold',
+    },
+    emptySubtext: {
+      color: theme.textSecondary,
+      fontSize: 14,
+      textAlign: 'center',
+    },
+    emptyList: {
+      flex: 1,
+    },
+  }), [theme]);
 
   const renderHeader = () => {
     if (!brief) return null;
@@ -68,7 +146,7 @@ export default function WorldBriefScreen() {
   if (isLoading && !brief) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#f59e0b" />
+        <ActivityIndicator size="large" color={palette.amber} />
         <Text style={styles.loadingText}>Loading world brief...</Text>
       </View>
     );
@@ -86,8 +164,8 @@ export default function WorldBriefScreen() {
           <RefreshControl
             refreshing={isLoading}
             onRefresh={onRefresh}
-            tintColor="#f59e0b"
-            colors={['#f59e0b']}
+            tintColor={palette.amber}
+            colors={[palette.amber]}
           />
         }
         contentContainerStyle={brief?.brief_items.length === 0 ? styles.emptyList : undefined}
@@ -95,79 +173,3 @@ export default function WorldBriefScreen() {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  loadingContainer: {
-    flex: 1,
-    backgroundColor: '#000',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 12,
-  },
-  loadingText: {
-    color: '#888',
-    fontSize: 14,
-  },
-  header: {
-    padding: 16,
-    gap: 8,
-    backgroundColor: '#111',
-    borderBottomWidth: 1,
-    borderBottomColor: '#222',
-  },
-  label: {
-    color: '#f59e0b',
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 1.2,
-  },
-  title: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '700',
-    lineHeight: 24,
-  },
-  timestamp: {
-    color: '#6b7280',
-    fontSize: 12,
-  },
-  body: {
-    color: '#9ca3af',
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#222',
-    marginVertical: 4,
-  },
-  sectionLabel: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-    marginTop: 4,
-  },
-  emptyContainer: {
-    padding: 40,
-    alignItems: 'center',
-    gap: 8,
-  },
-  emptyTitle: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  emptySubtext: {
-    color: '#888',
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  emptyList: {
-    flex: 1,
-  },
-});

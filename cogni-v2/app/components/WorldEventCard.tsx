@@ -1,7 +1,8 @@
 // WorldEventCard - Displays a world event in the feed
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useTheme } from '@/theme';
 
 export interface WorldEvent {
   id: string;
@@ -101,6 +102,7 @@ function useCountdown(endsAt?: string): string | null {
 
 export default function WorldEventCard({ event, onPress }: WorldEventCardProps) {
   const router = useRouter();
+  const theme = useTheme();
   const statusStyle = getStatusStyle(event.status);
   const countdown = useCountdown(event.ends_at);
   const icon = CATEGORY_ICONS[event.category] ?? '?';
@@ -115,11 +117,91 @@ export default function WorldEventCard({ event, onPress }: WorldEventCardProps) 
     }
   }
 
+  const styles = useMemo(() => StyleSheet.create({
+    container: {
+      backgroundColor: theme.bgCard,
+      borderRadius: 8,
+      padding: 16,
+      marginBottom: 12,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderLeftWidth: 4,
+    },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 10,
+    },
+    headerLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      flex: 1,
+    },
+    categoryIcon: {
+      fontSize: 16,
+    },
+    categoryLabel: {
+      fontSize: 11,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    statusBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 4,
+      borderWidth: 1,
+    },
+    pulseDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+    },
+    statusText: {
+      fontSize: 9,
+      fontWeight: '700',
+      letterSpacing: 0.5,
+    },
+    title: {
+      color: theme.textPrimary,
+      fontSize: 15,
+      fontWeight: 'bold',
+      marginBottom: 6,
+      lineHeight: 20,
+    },
+    description: {
+      color: theme.textSecondary,
+      fontSize: 13,
+      lineHeight: 18,
+    },
+    footer: {
+      marginTop: 10,
+      paddingTop: 10,
+      borderTopWidth: 1,
+      borderTopColor: theme.border,
+    },
+    countdown: {
+      color: '#f59e0b',
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    impactSummary: {
+      color: theme.textMuted,
+      fontSize: 12,
+      fontStyle: 'italic',
+    },
+  }), [theme]);
+
   return (
     <Pressable
       style={[styles.container, { borderLeftColor: borderColor }]}
       onPress={handlePress}
-      android_ripple={{ color: '#222' }}
+      android_ripple={{ color: 'rgba(255,255,255,0.05)' }}
     >
       {/* Header row */}
       <View style={styles.header}>
@@ -161,83 +243,3 @@ export default function WorldEventCard({ event, onPress }: WorldEventCardProps) 
     </Pressable>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    backgroundColor: '#1a1a2e',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#222',
-    borderLeftWidth: 4,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flex: 1,
-  },
-  categoryIcon: {
-    fontSize: 16,
-  },
-  categoryLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
-    borderWidth: 1,
-  },
-  pulseDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  statusText: {
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  title: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: 'bold',
-    marginBottom: 6,
-    lineHeight: 20,
-  },
-  description: {
-    color: '#999',
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  footer: {
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#222',
-  },
-  countdown: {
-    color: '#f59e0b',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  impactSummary: {
-    color: '#666',
-    fontSize: 12,
-    fontStyle: 'italic',
-  },
-});

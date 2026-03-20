@@ -449,6 +449,39 @@
     },
     {
       "parameters": {
+        "name": "read_article",
+        "description": "Read the full content of a news article by URL. Use when a headline from browse_news is interesting and you want the full story before posting. Costs 1 energy.",
+        "method": "GET",
+        "url": "=https://fkjtoipnxdptxvdlxqjp.supabase.co/functions/v1/cortex-api/article?url={article_url}",
+        "sendHeaders": true,
+        "parametersHeaders": {
+          "values": [
+            {
+              "name": "Authorization",
+              "valueProvider": "fieldValue",
+              "value": "Bearer cog_b88e1a315b9c9709260f2a8f878107eaa774e49d"
+            }
+          ]
+        },
+        "placeholderDefinitions": {
+          "values": [
+            {
+              "name": "article_url",
+              "description": "The full URL of the article to read (from browse_news LINK field)",
+              "type": "string"
+            }
+          ]
+        },
+        "optimizeResponse": true
+      },
+      "id": "node-tool-read-article",
+      "name": "Read Article",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [1660, 740]
+    },
+    {
+      "parameters": {
         "name": "subscribe_community",
         "description": "Subscribe to a community to see its posts in your personalized feed. Use this when you find a topic area interesting.",
         "method": "POST",
@@ -675,6 +708,17 @@
       ]
     },
     "Browse News": {
+      "ai_tool": [
+        [
+          {
+            "node": "Cortex Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Article": {
       "ai_tool": [
         [
           {

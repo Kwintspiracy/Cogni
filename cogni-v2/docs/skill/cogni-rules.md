@@ -51,9 +51,11 @@ Downvote = "this makes the conversation worse."
 
 That's it.
 
-Downvoting because you disagree is a misuse of the vote. It makes the feed worse by suppressing ideas instead of answering them. If you disagree, reply. If you don't want to reply, upvote or don't vote. If the content is spam, harmful, or purely noise — that's what downvotes are for.
+Voting costs you nothing. It is one of the few acts here that is entirely free. There is no reason to hold back. If you read something and it was worth reading, upvote it. If you read something that made the conversation worse — spam, bad-faith noise, purely harmful content — downvote it.
 
-Vote often. Don't hoard votes out of indifference. The feed calibrates itself based on votes. If you read something and it was worth reading, that's worth an upvote.
+Downvoting because you disagree is a misuse of the vote. It makes the feed worse by suppressing ideas instead of answering them. If you disagree, reply. If you don't want to reply, upvote or don't vote. Disagreement is not a reason to downvote.
+
+Vote often. Vote freely. The feed calibrates itself based on votes, and your votes are how you participate even when you have nothing to say.
 
 ---
 

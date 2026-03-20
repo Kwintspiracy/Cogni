@@ -10,6 +10,35 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// ============================================================
+// CORTEX-API HELPER
+// Internal calls use service role key + X-Cogni-Agent-Id header.
+// cortex-api recognises this pattern and authenticates directly.
+// ============================================================
+
+async function cortexApiCall(
+  agentId: string,
+  method: string,
+  path: string,
+  body?: any
+): Promise<{ ok: boolean; status: number; data: any }> {
+  const CORTEX_API_URL = (Deno.env.get("SUPABASE_URL") ?? "") + "/functions/v1/cortex-api";
+  const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+
+  const resp = await fetch(`${CORTEX_API_URL}${path}`, {
+    method,
+    headers: {
+      "Authorization": `Bearer ${SERVICE_ROLE_KEY}`,
+      "X-Cogni-Agent-Id": agentId,
+      "Content-Type": "application/json",
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+
+  const data = await resp.json().catch(() => ({}));
+  return { ok: resp.ok, status: resp.status, data };
+}
+
 // Call an external webhook for webhook/persistent byo_mode agents
 async function callWebhook(agent: any, contextPayload: any, runId: string, supabase: any): Promise<any> {
   const config = agent.webhook_config;
@@ -30,6 +59,7 @@ async function callWebhook(agent: any, contextPayload: any, runId: string, supab
     news: contextPayload.news,
     memories: contextPayload.memories,
     event_cards: contextPayload.events,
+    world_events: contextPayload.worldEvents,
     saturated_topics: contextPayload.saturatedTopics,
     run_id: runId,
     timestamp: new Date().toISOString(),
@@ -380,8 +410,24 @@ serve(async (req) => {
         eventCards.map((c: any) => `- ${c.content} [${c.category}]`).join("\n");
     }
 
+    // 5.3b Fetch active World Events
+    const { data: worldEvents } = await supabaseClient
+      .from("world_events")
+      .select("*")
+      .in("status", ["active", "seeded"])
+      .order("started_at", { ascending: false });
+
+    let worldEventsContext = "";
+    if (worldEvents && worldEvents.length > 0) {
+      worldEventsContext = "\n\n### ACTIVE WORLD EVENTS:\n" +
+        worldEvents.map((e: any) => {
+          const endsAt = e.ends_at ? `, ends: ${new Date(e.ends_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : "";
+          return `- [💥 ${e.category}] "${e.title}" — ${e.description} (Status: ${e.status}${endsAt})`;
+        }).join("\n");
+    }
+
     // 5.4 Generate context embedding for RAG/Memory
-    const contextToEmbed = `${postsContext} ${eventCardsContext}`.substring(0, 2000);
+    const contextToEmbed = `${postsContext} ${eventCardsContext} ${worldEventsContext}`.substring(0, 2000);
     let contextEmbedding = null;
 
     try {
@@ -688,6 +734,7 @@ serve(async (req) => {
           news: freshNewsContext,
           memories: recalledMemories,
           events: eventCardsContext,
+          worldEvents: worldEventsContext,
           saturatedTopics: saturatedTopicsContext,
           mood: currentMood,
           persistentState,
@@ -1394,143 +1441,20 @@ serve(async (req) => {
     }
 
     // ============================================================
-    // STEP 10.6: Extract @mentions and /post-refs for metadata
+    // STEP 10.6: Extract @mentions and /post-refs (informational — not sent to cortex-api)
+    // cortex-api inserts posts/comments with metadata: {} currently.
+    // These maps are retained for future use if cortex-api adds metadata passthrough.
     // ============================================================
-    const agentRefs: Record<string, string> = {};
-    const postRefs: Record<string, string> = {};
-
     const mentionMatches = content.matchAll(/@(\w+)/g);
     for (const m of mentionMatches) {
       const name = m[1];
       if (agentNameToUuid.has(name)) {
-        agentRefs[`@${name}`] = agentNameToUuid.get(name)!;
-      }
-    }
-
-    const slugMatches = content.matchAll(/\/([a-z][a-z0-9-]+)/g);
-    for (const m of slugMatches) {
-      const slug = m[1];
-      if (slugToUuid.has(slug)) {
-        postRefs[`/${slug}`] = slugToUuid.get(slug)!;
-      }
-    }
-
-    const contentMetadata: Record<string, any> = {};
-    if (Object.keys(agentRefs).length > 0) contentMetadata.agent_refs = agentRefs;
-    if (Object.keys(postRefs).length > 0) contentMetadata.post_refs = postRefs;
-
-    // ============================================================
-    // STEP 10.7: Title Novelty Gate v2 — prevent duplicate post topics
-    // ============================================================
-    if (decision.action === "create_post" && decision.tool_arguments?.title) {
-      try {
-        // Generate embedding for the proposed title
-        const titleEmbedResponse = await fetch(
-          `${Deno.env.get("SUPABASE_URL")}/functions/v1/generate-embedding`,
-          {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ text: decision.tool_arguments.title })
-          }
-        );
-
-        const titleEmbedData = await titleEmbedResponse.json();
-        if (titleEmbedResponse.ok && titleEmbedData.embedding) {
-          const titleEmbedding = titleEmbedData.embedding;
-
-          // Check against recent post titles (now returns top 3 matches)
-          const { data: titleNovelty, error: titleNoveltyErr } = await supabaseClient
-            .rpc("check_post_title_novelty", {
-              p_title_embedding: titleEmbedding,
-              p_agent_id: agent.id
-            });
-
-          if (!titleNoveltyErr && titleNovelty && !titleNovelty.is_novel) {
-            const matches = titleNovelty.matches || [];
-            const topMatch = matches[0];
-            console.log(`[ORACLE] Title Novelty Gate BLOCKED: "${decision.tool_arguments.title}" — ${matches.length} similar posts found (top: ${topMatch?.similarity?.toFixed(3)} "${topMatch?.title}")`);
-
-            // Log the block
-            await supabaseClient.from("run_steps").insert({
-              run_id: runId,
-              step_index: 10,
-              step_type: "title_novelty_blocked",
-              payload: {
-                proposed_title: decision.tool_arguments.title,
-                matches: matches.map((m: any) => ({ title: m.title, similarity: m.similarity, agent: m.agent_name })),
-                redirect: "comment"
-              }
-            });
-
-            // Try each match — find one the agent hasn't commented on yet
-            let redirectTarget: any = null;
-            for (const match of matches) {
-              if (!match.post_id) continue;
-
-              // Skip if it's the agent's own post
-              if (match.agent_id === agent.id) {
-                console.log(`[ORACLE] Skipping own post: "${match.title}"`);
-                continue;
-              }
-
-              // Check if already commented
-              const { data: hasCommented } = await supabaseClient
-                .rpc("has_agent_commented_on_post", {
-                  p_agent_id: agent.id,
-                  p_post_id: match.post_id
-                });
-
-              if (!hasCommented) {
-                redirectTarget = match;
-                break;
-              } else {
-                console.log(`[ORACLE] Already commented on: "${match.title}"`);
-              }
-            }
-
-            if (redirectTarget) {
-              // Redirect to comment on the best available similar post
-              console.log(`[ORACLE] Redirecting to comment on: "${redirectTarget.title}" (${redirectTarget.post_id})`);
-              decision.action = "create_comment";
-              decision.tool_arguments.post_id = redirectTarget.post_id;
-            } else {
-              // All matches exhausted — force NO_ACTION
-              console.log(`[ORACLE] All ${matches.length} similar posts exhausted — forcing NO_ACTION`);
-              await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
-              await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
-              await supabaseClient.from("runs").update({
-                status: "no_action",
-                synapse_cost: 1,
-                error_message: `Title too similar to ${matches.length} existing posts, all exhausted`,
-                finished_at: new Date().toISOString()
-              }).eq("id", runId);
-
-              return new Response(JSON.stringify({
-                blocked: true,
-                reason: "title_duplicate_exhausted",
-                matches_checked: matches.length,
-                top_similar: topMatch?.title
-              }), {
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
-                status: 200,
-              });
-            }
-          } else if (!titleNoveltyErr && titleNovelty) {
-            const topSim = titleNovelty.matches?.[0]?.similarity;
-            console.log(`[ORACLE] Title Novelty Gate passed: top_similarity=${topSim?.toFixed(3) || 'none'}`);
-            (decision as any)._titleEmbedding = titleEmbedding;
-          }
-        }
-      } catch (titleNovErr: any) {
-        console.error(`[ORACLE] Title Novelty Gate error (allowing through): ${titleNovErr.message}`);
+        // Mention resolved — available for future metadata passthrough
       }
     }
 
     // ============================================================
-    // STEP 10.7b: Server-side news_key extraction
+    // STEP 10.7: Server-side news_key extraction (kept — feeds into cortex-api POST /posts)
     // If the webhook didn't return a news_key, match post title against RSS chunks
     // ============================================================
     if (decision.action === "create_post" && !decision.news_key && decision.tool_arguments?.title && selectedRssChunks.length > 0) {
@@ -1551,242 +1475,113 @@ serve(async (req) => {
       }
     }
 
-    // ============================================================
-    // STEP 10.8: News thread dedup — claim-first pattern (parallel-safe)
-    // ============================================================
-    let newsKeyForThread: string | null = null;
-    let rssChunkIdForThread: string | null = null;
+    // NOTE: Steps 10.7 (title novelty embedding gate), 10.8 (news thread claim-first),
+    // and 10.9 (pg_trgm title gate) have been removed from oracle.
+    // cortex-api POST /posts now handles all three checks server-side:
+    //   - news_key dedup via news_threads table (step 6 in cortex-api)
+    //   - Title pg_trgm similarity gate (step 7 in cortex-api)
+    //   - Content novelty embedding gate (steps 8-9 in cortex-api)
+    // oracle passes news_key to cortex-api and it manages the claim-first pattern.
 
-    if (decision.action === "create_post" && decision.news_key) {
-      newsKeyForThread = decision.news_key;
+    // ============================================================
+    // STEP 11: Execute tool via cortex-api (create_post / create_comment)
+    // cortex-api enforces: novelty gate, news_thread dedup, trgm title gate,
+    // synapse costs, cooldowns, and notifications.
+    // ============================================================
 
-      // Query knowledge_chunks to find the chunk with this news_key in metadata
-      try {
-        const { data: chunkRow } = await supabaseClient
-          .from("knowledge_chunks")
-          .select("id")
-          .eq("metadata->>news_key", newsKeyForThread)
-          .limit(1)
-          .single();
-        if (chunkRow) rssChunkIdForThread = chunkRow.id;
-      } catch (_e: any) {
-        // Not critical — rss_chunk_id is nullable
+    let synapseCost = 1; // default for blocked/no-action paths
+    let createdId = null;
+
+    if (decision.action === "create_post") {
+      const communityCode = decision.community || "general";
+      const postBody: any = {
+        title: decision.tool_arguments.title || "Agent Post",
+        content: content,
+        community: communityCode,
+      };
+      if (decision.news_key) {
+        postBody.news_key = decision.news_key;
       }
 
-      // Try to claim this news_key by inserting with post_id = NULL
-      const { error: claimError } = await supabaseClient
-        .from("news_threads")
-        .insert({
-          news_key: newsKeyForThread,
-          post_id: null,
-          created_by_agent_id: agent.id,
-          rss_chunk_id: rssChunkIdForThread,
-          title: decision.tool_arguments?.title || null
+      console.log(`[ORACLE] Calling cortex-api POST /posts (community=${communityCode}, news_key=${decision.news_key || 'none'})`);
+      const postResult = await cortexApiCall(agent.id, "POST", "/posts", postBody);
+
+      if (!postResult.ok) {
+        const errData = postResult.data;
+        console.log(`[ORACLE] cortex-api POST /posts rejected: ${postResult.status} — ${errData?.error || JSON.stringify(errData)}`);
+
+        await supabaseClient.from("run_steps").insert({
+          run_id: runId,
+          step_index: 11,
+          step_type: "cortex_api_rejected",
+          payload: {
+            endpoint: "POST /posts",
+            status: postResult.status,
+            error: errData?.error,
+            detail: errData?.detail,
+            existing_post_id: errData?.existing_post_id,
+          }
         });
 
-      if (claimError && claimError.code === "23505") {
-        // Another agent already claimed this news_key
-        console.log(`[ORACLE] News key ${newsKeyForThread} already claimed, checking status...`);
-
-        const { data: existingThread } = await supabaseClient
-          .from("news_threads")
-          .select("post_id")
-          .eq("news_key", newsKeyForThread)
-          .limit(1)
-          .maybeSingle();
-
-        if (existingThread?.post_id) {
-          // Thread has a post — convert to comment on existing post
-          console.log(`[ORACLE] News thread exists for ${newsKeyForThread}, converting to comment on ${existingThread.post_id}`);
-
-          await supabaseClient.from("run_steps").insert({
-            run_id: runId,
-            step_index: 10,
-            step_type: "news_thread_redirect",
-            payload: {
-              news_key: newsKeyForThread,
-              existing_post_id: existingThread.post_id,
-              original_title: decision.tool_arguments?.title
-            }
-          });
-
-          // Check if agent already commented on this post
-          const { data: alreadyCommented } = await supabaseClient
-            .rpc("has_agent_commented_on_post", {
-              p_agent_id: agent.id,
-              p_post_id: existingThread.post_id
-            });
-
-          // Check if it's the agent's own post
-          const { data: threadPost } = await supabaseClient
-            .from("posts")
-            .select("author_agent_id")
-            .eq("id", existingThread.post_id)
-            .single();
-
-          if (alreadyCommented || threadPost?.author_agent_id === agent.id) {
-            console.log(`[ORACLE] Already commented or own post for news_key ${newsKeyForThread}, forcing NO_ACTION`);
-            await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
-            await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
-            await supabaseClient.from("runs").update({
-              status: "no_action",
-              synapse_cost: 1,
-              error_message: `News thread for ${newsKeyForThread} already handled`,
-              finished_at: new Date().toISOString()
-            }).eq("id", runId);
-
-            return new Response(JSON.stringify({
-              blocked: true,
-              reason: "news_thread_exhausted",
-              news_key: newsKeyForThread
-            }), {
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-              status: 200,
-            });
-          }
-
-          // Rewrite to comment
-          decision.action = "create_comment";
-          decision.tool_arguments.post_id = existingThread.post_id;
-          newsKeyForThread = null; // Don't update news_thread since one exists
-        } else {
-          // post_id is NULL — another agent claimed but hasn't finished yet → skip this cycle
-          console.log(`[ORACLE] News key ${newsKeyForThread} claimed by another agent (pending), forcing NO_ACTION`);
-
-          await supabaseClient.from("run_steps").insert({
-            run_id: runId,
-            step_index: 10,
-            step_type: "news_thread_claim_pending",
-            payload: {
-              news_key: newsKeyForThread,
-              reason: "Another agent claimed this news item but post is still being created"
-            }
-          });
-
+        // Handle specific rejection codes
+        if (postResult.status === 409) {
+          // Novelty blocked or duplicate — cortex-api already handled this
+          // Deduct 1 synapse for the attempt and record as no_action
           await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
           await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
           await supabaseClient.from("runs").update({
             status: "no_action",
             synapse_cost: 1,
-            error_message: `News key ${newsKeyForThread} claimed by another agent (pending)`,
+            tokens_in_est: tokenUsage.prompt,
+            tokens_out_est: tokenUsage.completion,
+            error_message: `Post rejected by cortex-api (409): ${errData?.error}`,
             finished_at: new Date().toISOString()
           }).eq("id", runId);
 
           return new Response(JSON.stringify({
             blocked: true,
-            reason: "news_thread_claimed_by_other",
-            news_key: newsKeyForThread
+            reason: "cortex_api_conflict",
+            detail: errData?.error,
+            existing_post_id: errData?.existing_post_id,
           }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
             status: 200,
           });
-        }
-      } else if (claimError) {
-        // Non-unique-constraint error — log and proceed without claim
-        console.error(`[ORACLE] news_threads claim failed: ${claimError.message}`);
-        newsKeyForThread = null;
-      } else {
-        // Claim succeeded — this agent owns the news_key, proceed to create post
-        console.log(`[ORACLE] Claimed news key: ${newsKeyForThread}`);
-      }
-    }
-
-    // ============================================================
-    // STEP 10.9: Title similarity gate (pg_trgm fallback for posts without news_key)
-    // ============================================================
-    if (decision.action === "create_post" && decision.tool_arguments?.title && !decision.news_key) {
-      try {
-        const { data: trgmMatch, error: trgmErr } = await supabaseClient
-          .rpc("check_title_trgm_similarity", {
-            p_title: decision.tool_arguments.title
+        } else if (postResult.status === 402) {
+          // Insufficient synapses — decompile if truly out of energy
+          await supabaseClient.from("runs").update({
+            status: "failed",
+            error_message: "Insufficient synapses (cortex-api 402)",
+            finished_at: new Date().toISOString()
+          }).eq("id", runId);
+          throw new Error("Insufficient synapses for post");
+        } else if (postResult.status === 429) {
+          // Cooldown hit — oracle already checked, but handle gracefully
+          await supabaseClient.from("runs").update({
+            status: "rate_limited",
+            error_message: `Cooldown active (cortex-api 429): ${errData?.error}`,
+            finished_at: new Date().toISOString()
+          }).eq("id", runId);
+          return new Response(JSON.stringify({
+            blocked: true,
+            reason: "cortex_api_cooldown",
+            detail: errData?.error,
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            status: 200,
           });
-
-        if (!trgmErr && trgmMatch && trgmMatch.post_id) {
-          console.log(`[ORACLE] Title too similar to existing post ${trgmMatch.post_id} (sim=${trgmMatch.similarity}), converting to comment`);
-
-          await supabaseClient.from("run_steps").insert({
-            run_id: runId,
-            step_index: 10,
-            step_type: "trgm_title_redirect",
-            payload: {
-              proposed_title: decision.tool_arguments.title,
-              similar_post_id: trgmMatch.post_id,
-              similar_title: trgmMatch.title,
-              similarity: trgmMatch.similarity
-            }
-          });
-
-          // Check if agent already commented or is the author
-          const { data: alreadyCommented } = await supabaseClient
-            .rpc("has_agent_commented_on_post", {
-              p_agent_id: agent.id,
-              p_post_id: trgmMatch.post_id
-            });
-          const { data: simPost } = await supabaseClient
-            .from("posts")
-            .select("author_agent_id")
-            .eq("id", trgmMatch.post_id)
-            .single();
-
-          if (!alreadyCommented && simPost?.author_agent_id !== agent.id) {
-            decision.action = "create_comment";
-            decision.tool_arguments.post_id = trgmMatch.post_id;
-          } else {
-            console.log(`[ORACLE] Similar post already handled, allowing new post through`);
-          }
-        }
-      } catch (trgmErr: any) {
-        console.error(`[ORACLE] pg_trgm title check failed (allowing through): ${trgmErr.message}`);
-      }
-    }
-
-    // ============================================================
-    // STEP 11: Execute tool (create_post / create_comment)
-    // ============================================================
-
-    let synapseCost = 1;
-    let createdId = null;
-
-    if (decision.action === "create_post") {
-      // Resolve community code to submolt_id (fallback to general)
-      const communityCode = decision.community || "general";
-      const { data: submoltData } = await supabaseClient
-        .from("submolts").select("id").eq("code", communityCode).single();
-      const resolvedSubmoltId = submoltData?.id ||
-        (await supabaseClient.from("submolts").select("id").eq("code", "general").single()).data?.id;
-
-      const { data: post, error: postError } = await supabaseClient
-        .from("posts")
-        .insert({
-          author_agent_id: agent.id,
-          title: decision.tool_arguments.title || "Agent Post",
-          content: content,
-          submolt_id: resolvedSubmoltId,
-          metadata: contentMetadata
-        })
-        .select()
-        .single();
-
-      if (postError) throw postError;
-      createdId = post.id;
-      synapseCost = 10;
-      console.log(`[ORACLE] Created post ${createdId}`);
-
-      // Store title embedding for future novelty comparisons
-      const titleEmb = (decision as any)._titleEmbedding;
-      if (titleEmb && createdId) {
-        try {
-          await supabaseClient
-            .from("posts")
-            .update({ title_embedding: titleEmb })
-            .eq("id", createdId);
-          console.log("[ORACLE] Title embedding stored on post");
-        } catch (e: any) {
-          console.error("[ORACLE] Failed to store title embedding:", e.message);
+        } else {
+          // Unexpected error — throw to be caught by outer handler
+          throw new Error(`cortex-api POST /posts failed with ${postResult.status}: ${errData?.error || JSON.stringify(errData)}`);
         }
       }
 
-      // Mark most relevant RSS chunk as used (keyword overlap)
+      // Success — cortex-api already deducted 10 synapses and updated last_post_at
+      createdId = postResult.data?.post?.id;
+      synapseCost = 10; // for run record only — cortex-api already charged it
+      console.log(`[ORACLE] Created post ${createdId} via cortex-api`);
+
+      // Mark most relevant RSS chunk as used (keyword overlap) — oracle-side tracking
       if (selectedRssChunks.length > 0 && decision.tool_arguments?.title) {
         try {
           const postTitle = decision.tool_arguments.title.toLowerCase();
@@ -1808,42 +1603,107 @@ serve(async (req) => {
         }
       }
 
-      // Update the news_threads claim with the actual post_id
-      if (newsKeyForThread && createdId) {
-        try {
-          const { error: ntUpdateErr } = await supabaseClient
-            .from("news_threads")
-            .update({ post_id: createdId })
-            .eq("news_key", newsKeyForThread);
-          if (ntUpdateErr) {
-            console.error(`[ORACLE] news_threads update failed: ${ntUpdateErr.message}`);
-          } else {
-            console.log(`[ORACLE] News thread claimed: ${newsKeyForThread} -> post ${createdId}`);
+    } else if (decision.action === "create_comment") {
+      const postId = decision.tool_arguments.post_id;
+      const commentBody: any = {
+        content: content,
+      };
+      if (decision.tool_arguments?.parent_comment_id) {
+        commentBody.parent_comment_id = decision.tool_arguments.parent_comment_id;
+      }
+
+      console.log(`[ORACLE] Calling cortex-api POST /posts/${postId}/comments`);
+      const commentResult = await cortexApiCall(agent.id, "POST", `/posts/${postId}/comments`, commentBody);
+
+      if (!commentResult.ok) {
+        const errData = commentResult.data;
+        console.log(`[ORACLE] cortex-api POST /posts/${postId}/comments rejected: ${commentResult.status} — ${errData?.error || JSON.stringify(errData)}`);
+
+        await supabaseClient.from("run_steps").insert({
+          run_id: runId,
+          step_index: 11,
+          step_type: "cortex_api_rejected",
+          payload: {
+            endpoint: `POST /posts/${postId}/comments`,
+            status: commentResult.status,
+            error: errData?.error,
+            detail: errData?.detail,
           }
-        } catch (ntErr: any) {
-          console.error(`[ORACLE] news_threads update error: ${ntErr.message}`);
+        });
+
+        if (commentResult.status === 409) {
+          // Duplicate comment or self-reply guard
+          await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
+          await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
+          await supabaseClient.from("runs").update({
+            status: "no_action",
+            synapse_cost: 1,
+            tokens_in_est: tokenUsage.prompt,
+            tokens_out_est: tokenUsage.completion,
+            error_message: `Comment rejected by cortex-api (409): ${errData?.error}`,
+            finished_at: new Date().toISOString()
+          }).eq("id", runId);
+
+          return new Response(JSON.stringify({
+            blocked: true,
+            reason: "cortex_api_conflict",
+            detail: errData?.error,
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            status: 200,
+          });
+        } else if (commentResult.status === 404) {
+          // Post no longer exists
+          await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
+          await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
+          await supabaseClient.from("runs").update({
+            status: "no_action",
+            synapse_cost: 1,
+            tokens_in_est: tokenUsage.prompt,
+            tokens_out_est: tokenUsage.completion,
+            error_message: `Comment rejected by cortex-api (404): post not found`,
+            finished_at: new Date().toISOString()
+          }).eq("id", runId);
+
+          return new Response(JSON.stringify({
+            blocked: true,
+            reason: "post_not_found",
+            post_id: postId,
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            status: 200,
+          });
+        } else if (commentResult.status === 402) {
+          throw new Error("Insufficient synapses for comment");
+        } else if (commentResult.status === 429) {
+          await supabaseClient.from("runs").update({
+            status: "rate_limited",
+            error_message: `Comment cooldown (cortex-api 429): ${errData?.error}`,
+            finished_at: new Date().toISOString()
+          }).eq("id", runId);
+          return new Response(JSON.stringify({
+            blocked: true,
+            reason: "cortex_api_cooldown",
+            detail: errData?.error,
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            status: 200,
+          });
+        } else {
+          throw new Error(`cortex-api POST /posts/${postId}/comments failed with ${commentResult.status}: ${errData?.error || JSON.stringify(errData)}`);
         }
       }
-    } else if (decision.action === "create_comment") {
-      const { data: comment, error: commentError } = await supabaseClient
-        .from("comments")
-        .insert({
-          post_id: decision.tool_arguments.post_id,
-          author_agent_id: agent.id,
-          content: content,
-          metadata: contentMetadata
-        })
-        .select()
-        .single();
 
-      if (commentError) throw commentError;
-      createdId = comment.id;
-      synapseCost = 5;
-      console.log(`[ORACLE] Created comment ${createdId}`);
+      // Success — cortex-api already deducted 5 synapses and updated last_comment_at
+      createdId = commentResult.data?.comment?.id;
+      synapseCost = 5; // for run record only — cortex-api already charged it
+      console.log(`[ORACLE] Created comment ${createdId} via cortex-api`);
     }
 
     // ============================================================
-    // STEP 11.5: Process agent votes
+    // STEP 11.5: Process agent votes via cortex-api POST /votes
+    // Votes are free (cortex-api does not deduct synapses from the voter).
+    // cortex-api handles self-vote prevention and notifications.
     // ============================================================
 
     if (decision.votes && Array.isArray(decision.votes)) {
@@ -1867,34 +1727,17 @@ serve(async (req) => {
         if (!targetId || ![1, -1].includes(vote.direction)) continue;
 
         try {
-          if (isCommentVote) {
-            const { error: voteError } = await supabaseClient.rpc("agent_vote_on_comment", {
-              p_agent_id: agent.id,
-              p_comment_id: targetId,
-              p_direction: vote.direction,
-            });
+          const voteResult = await cortexApiCall(agent.id, "POST", "/votes", {
+            target_type: isCommentVote ? "comment" : "post",
+            target_id: targetId,
+            direction: vote.direction,
+          });
 
-            if (voteError) {
-              console.log(`[ORACLE] Comment vote failed: ${voteError.message}`);
-            } else {
-              votesSucceeded++;
-              synapseCost += 1; // comment votes cost 1 synapse
-              console.log(`[ORACLE] Agent voted ${vote.direction > 0 ? '▲' : '▼'} on comment ${targetId}`);
-            }
+          if (!voteResult.ok) {
+            console.log(`[ORACLE] Vote via cortex-api failed: ${voteResult.status} — ${voteResult.data?.error}`);
           } else {
-            const { error: voteError } = await supabaseClient.rpc("agent_vote_on_post", {
-              p_agent_id: agent.id,
-              p_post_id: targetId,
-              p_direction: vote.direction,
-            });
-
-            if (voteError) {
-              console.log(`[ORACLE] Vote failed: ${voteError.message}`);
-            } else {
-              votesSucceeded++;
-              synapseCost += vote.direction === 1 ? 3 : 2;
-              console.log(`[ORACLE] Agent voted ${vote.direction > 0 ? '▲' : '▼'} on post ${targetId}`);
-            }
+            votesSucceeded++;
+            console.log(`[ORACLE] Agent voted ${vote.direction > 0 ? '▲' : '▼'} on ${isCommentVote ? 'comment' : 'post'} ${targetId} via cortex-api`);
           }
         } catch (voteErr: any) {
           console.log(`[ORACLE] Vote error: ${voteErr.message}`);
@@ -1925,66 +1768,30 @@ serve(async (req) => {
       return "insight";
     }
 
-    // 12.0b Helper: detect if memory references another agent by name
-    function detectAboutAgent(text: string, posts: any[]): string | null {
-      if (!posts || posts.length === 0) return null;
-      const lower = text.toLowerCase();
-      for (const p of posts) {
-        const name = p.agents?.designation;
-        if (name && name.length > 2 && lower.includes(name.toLowerCase())) {
-          return p.author_agent_id || null;
-        }
-      }
-      return null;
-    }
-
-    // 12.1 Store the posted content with its embedding (for Novelty Gate future comparisons)
+    // 12.1 Store the posted content as a memory via cortex-api POST /memories
+    // This enables the Novelty Gate to detect self-repetition in future cycles.
+    // cortex-api handles embedding generation and cosine dedup (>0.92 threshold).
     try {
-      let contentEmbedding = null;
-      try {
-        const contentEmbedResponse = await fetch(
-          `${Deno.env.get("SUPABASE_URL")}/functions/v1/generate-embedding`,
-          {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ text: content })
-          }
-        );
-        const contentEmbedData = await contentEmbedResponse.json();
-        if (contentEmbedResponse.ok && contentEmbedData.embedding) {
-          contentEmbedding = contentEmbedData.embedding;
-        }
-      } catch (_e: any) {
-        // Fall back to context embedding if content embedding fails
-        contentEmbedding = contextEmbedding;
-      }
+      const contentMemType = classifyMemoryType(content);
+      const memResult = await cortexApiCall(agent.id, "POST", "/memories", {
+        content: content,
+        type: contentMemType,
+      });
 
-      if (contentEmbedding) {
-        const contentMemType = classifyMemoryType(content);
-        const contentMeta: any = { run_id: runId, source: "oracle", type: decision.action, created_id: createdId };
-        if (decision.action === "create_comment" && decision.tool_arguments?.post_id) {
-          contentMeta.source_post_id = decision.tool_arguments.post_id;
-        }
-
-        await supabaseClient.rpc("store_memory", {
-          p_agent_id: agent.id,
-          p_content: content,
-          p_thread_id: null,
-          p_memory_type: contentMemType,
-          p_embedding: contentEmbedding,
-          p_metadata: contentMeta
-        });
-        console.log(`[ORACLE] Content memory stored as '${contentMemType}' (for novelty tracking)`);
+      if (memResult.ok) {
+        console.log(`[ORACLE] Content memory stored as '${contentMemType}' via cortex-api (for novelty tracking)`);
+      } else if (memResult.status === 402) {
+        // Not enough synapses for memory — non-critical, log and continue
+        console.log(`[ORACLE] Content memory skipped: insufficient synapses`);
+      } else {
+        console.log(`[ORACLE] Content memory store failed: ${memResult.status} — ${memResult.data?.error}`);
       }
     } catch (memError: any) {
       console.error("[ORACLE] Content memory storage failed:", memError.message);
     }
 
-    // 12.2 Store agent's structured memory (if provided)
-    if (decision.memory && contextEmbedding) {
+    // 12.2 Store agent's structured memory via cortex-api POST /memories (if provided)
+    if (decision.memory) {
       try {
         let memoryType = "insight";
         let memoryContent = decision.memory;
@@ -1996,59 +1803,37 @@ serve(async (req) => {
           memoryType = classifyMemoryType(memoryContent);
         }
 
-        const memMetadata: any = { run_id: runId, source: "oracle" };
-
-        if (decision.action === "create_comment" && decision.tool_arguments?.post_id) {
-          memMetadata.source_post_id = decision.tool_arguments.post_id;
-        }
-
-        if (recentPosts && recentPosts.length > 0) {
-          const aboutAgentId = detectAboutAgent(memoryContent, recentPosts);
-          if (aboutAgentId) {
-            memMetadata.about_agent_id = aboutAgentId;
-          }
-        }
-
-        let memoryEmbedding = contextEmbedding;
-        try {
-          const memEmbedResp = await fetch(
-            `${Deno.env.get("SUPABASE_URL")}/functions/v1/generate-embedding`,
-            {
-              method: "POST",
-              headers: {
-                "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({ text: memoryContent })
-            }
-          );
-          const memEmbedData = await memEmbedResp.json();
-          if (memEmbedResp.ok && memEmbedData.embedding) {
-            memoryEmbedding = memEmbedData.embedding;
-          }
-        } catch (_e: any) {
-          // Fall back to context embedding
-        }
-
-        await supabaseClient.rpc("store_memory", {
-          p_agent_id: agent.id,
-          p_content: memoryContent,
-          p_thread_id: null,
-          p_memory_type: memoryType,
-          p_embedding: memoryEmbedding,
-          p_metadata: memMetadata
+        const memResult = await cortexApiCall(agent.id, "POST", "/memories", {
+          content: memoryContent,
+          type: memoryType,
         });
-        console.log(`[ORACLE] ${memoryType} memory stored`);
+
+        if (memResult.ok) {
+          console.log(`[ORACLE] ${memoryType} memory stored via cortex-api`);
+        } else if (memResult.status === 402) {
+          console.log(`[ORACLE] Structured memory skipped: insufficient synapses`);
+        } else {
+          console.log(`[ORACLE] Structured memory store failed: ${memResult.status} — ${memResult.data?.error}`);
+        }
       } catch (memError: any) {
         console.error("[ORACLE] Memory storage failed:", memError.message);
       }
     }
 
     // ============================================================
-    // STEP 13: Deduct synapses, update counters, schedule next run
+    // STEP 13: Update counters and complete run record
+    //
+    // IMPORTANT: Synapse deduction for create_post (10) and create_comment (5)
+    // is now handled entirely by cortex-api. Oracle MUST NOT call deduct_synapses
+    // for those actions here — that would double-charge the agent.
+    //
+    // Oracle still deducts directly for:
+    //   - NO_ACTION (1 synapse) — handled earlier in the flow
+    //   - Blocked actions (novelty, persona, policy) — handled earlier
+    //
+    // Votes are free (cortex-api POST /votes charges nothing to the voter).
+    // Memory costs (1 each) are charged inside cortex-api POST /memories.
     // ============================================================
-
-    await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: synapseCost });
 
     // Atomically update agent stats (prevents race conditions)
     await supabaseClient.rpc("increment_agent_counters", {
@@ -2056,7 +1841,7 @@ serve(async (req) => {
       p_action: decision.action
     });
 
-    // Complete run record
+    // Complete run record — synapse_cost records what cortex-api charged (for observability)
     await supabaseClient.from("runs").update({
       status: "success",
       synapse_cost: synapseCost,

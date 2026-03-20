@@ -2,14 +2,18 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, Pressable, RefreshControl, ActivityIndicator, ScrollView } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
+import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useFeedStore } from '@/stores/feed.store';
 import { useAuthStore } from '@/stores/auth.store';
 import { useAgentsStore } from '@/stores/agents.store';
+import { useWorldBriefStore } from '@/stores/worldBrief.store';
 import { FeedPost } from '@/services/feed.service';
 import { subscribeToFeed, subscribeToVoteUpdates, unsubscribe } from '@/services/realtime.service';
 import PostCard from '@/components/PostCard';
 import EventCardBanner from '@/components/EventCardBanner';
+import WorldBriefCard from '@/components/WorldBriefCard';
+import WorldEventCard, { WorldEvent } from '@/components/WorldEventCard';
 
 interface Post {
   id: string;
@@ -25,6 +29,41 @@ interface Post {
     designation: string;
     role?: string;
   };
+  explanation_tags?: string[];
+  importance_reason?: string | null;
+  consequence_preview?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Section divider helpers
+// ---------------------------------------------------------------------------
+
+const SECTION_RULES: Array<{ tags: string[]; label: string }> = [
+  { tags: ['conflict_escalation'], label: 'Rising Conflict' },
+  { tags: ['news_reaction', 'event_wave'], label: 'News Wave' },
+  { tags: ['surprise_breakout', 'high_engagement'], label: 'Breaking Out' },
+  { tags: ['risky_action'], label: 'High Risk Activity' },
+  { tags: ['status_shift_related'], label: 'Status Shift' },
+];
+
+function getSectionLabel(post: Post): string | null {
+  if (!post.explanation_tags || post.explanation_tags.length === 0) return null;
+  for (const rule of SECTION_RULES) {
+    if (rule.tags.some((t) => post.explanation_tags!.includes(t))) {
+      return rule.label;
+    }
+  }
+  return null;
+}
+
+// Returns the label only when it differs from the previous post's label
+// (i.e. the first post in a new section group)
+function getSectionDivider(posts: Post[], index: number): string | null {
+  const current = getSectionLabel(posts[index]);
+  if (!current) return null;
+  if (index === 0) return current;
+  const previous = getSectionLabel(posts[index - 1]);
+  return current !== previous ? current : null;
 }
 
 const COMMUNITIES = [
@@ -55,17 +94,23 @@ function feedPostToPost(fp: FeedPost): Post {
       designation: fp.author_designation,
       role: fp.author_role || undefined,
     },
+    explanation_tags: fp.explanation_tags,
+    importance_reason: fp.importance_reason,
+    consequence_preview: fp.consequence_preview,
   };
 }
 
 export default function Feed() {
-  const { posts, isLoading, sortMode, selectedCommunity, setSortMode, setSelectedCommunity, fetchPosts, addPost, updatePost, myAgentsFilter, myAgentIds, setMyAgentIds, toggleMyAgentsFilter } = useFeedStore();
+  const { posts, isLoading, sortMode, selectedCommunity, setSortMode, setSelectedCommunity, fetchPosts, addPost, updatePost, myAgentsFilter, myAgentIds, setMyAgentIds, toggleMyAgentsFilter, subscribeToExplanations, unsubscribeFromExplanations } = useFeedStore();
   const { user } = useAuthStore();
   const { myAgents, fetchMyAgents } = useAgentsStore();
+  const { fetchBrief } = useWorldBriefStore();
   const [refreshing, setRefreshing] = useState(false);
   const [hasNewPosts, setHasNewPosts] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const isScrolledDown = useRef(false);
+  const [worldEvents, setWorldEvents] = useState<WorldEvent[]>([]);
+  const router = useRouter();
 
   // Load user's agent IDs on mount (once, when user is available)
   useEffect(() => {
@@ -76,6 +121,32 @@ export default function Feed() {
       });
     }
   }, [user?.id]);
+
+  // Fetch world brief on mount
+  useEffect(() => {
+    fetchBrief();
+  }, []);
+
+  // Fetch active world events on mount
+  useEffect(() => {
+    supabase
+      .from('world_events')
+      .select('*')
+      .in('status', ['active', 'seeded'])
+      .order('created_at', { ascending: false })
+      .limit(5)
+      .then(({ data }) => {
+        if (data) setWorldEvents(data as WorldEvent[]);
+      });
+  }, []);
+
+  // Subscribe to explanation metadata updates
+  useEffect(() => {
+    subscribeToExplanations();
+    return () => {
+      unsubscribeFromExplanations();
+    };
+  }, []);
 
   useEffect(() => {
     fetchPosts(selectedCommunity);
@@ -131,8 +202,8 @@ export default function Feed() {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchPosts().finally(() => setRefreshing(false));
-  }, [fetchPosts]);
+    Promise.all([fetchPosts(), fetchBrief()]).finally(() => setRefreshing(false));
+  }, [fetchPosts, fetchBrief]);
 
   const handleScroll = useCallback((e: any) => {
     isScrolledDown.current = e.nativeEvent.contentOffset.y > 200;
@@ -154,11 +225,21 @@ export default function Feed() {
     </View>
   );
 
-  const renderItem = useCallback(({ item, index }: { item: Post; index: number }) => (
-    <Animated.View entering={FadeInDown.duration(300).delay(index < 10 ? index * 50 : 0)}>
-      <PostCard post={item} myAgentIds={myAgentIds} />
-    </Animated.View>
-  ), [myAgentIds]);
+  const renderItem = useCallback(({ item, index }: { item: Post; index: number }) => {
+    const divider = getSectionDivider(mappedPosts, index);
+    return (
+      <Animated.View entering={FadeInDown.duration(300).delay(index < 10 ? index * 50 : 0)}>
+        {divider && (
+          <View style={styles.sectionDivider}>
+            <View style={styles.sectionDividerLine} />
+            <Text style={styles.sectionDividerText}>— {divider} —</Text>
+            <View style={styles.sectionDividerLine} />
+          </View>
+        )}
+        <PostCard post={item} myAgentIds={myAgentIds} />
+      </Animated.View>
+    );
+  }, [myAgentIds, mappedPosts]);
 
   return (
     <View style={styles.container}>
@@ -242,6 +323,23 @@ export default function Feed() {
           data={mappedPosts}
           keyExtractor={(item) => item.id}
           renderItem={renderItem}
+          ListHeaderComponent={
+            <View>
+              <WorldBriefCard />
+              {worldEvents.length > 0 && (
+                <View style={styles.worldEventsSection}>
+                  <Text style={styles.worldEventsSectionTitle}>Active Events</Text>
+                  {worldEvents.map((event) => (
+                    <WorldEventCard
+                      key={event.id}
+                      event={event}
+                      onPress={() => router.push(`/events/${event.id}` as any)}
+                    />
+                  ))}
+                </View>
+              )}
+            </View>
+          }
           ListEmptyComponent={renderEmpty}
           onScroll={handleScroll}
           scrollEventThrottle={100}
@@ -379,5 +477,37 @@ const styles = StyleSheet.create({
   },
   myAgentsChipTextActive: {
     color: '#4ade80',
+  },
+  sectionDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#000',
+    gap: 8,
+  },
+  sectionDividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#333',
+  },
+  sectionDividerText: {
+    color: '#555',
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
+  worldEventsSection: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 4,
+  },
+  worldEventsSectionTitle: {
+    color: '#888',
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 10,
   },
 });

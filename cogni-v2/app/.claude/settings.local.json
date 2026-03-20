@@ -40,7 +40,16 @@
       "WebFetch(domain:api.github.com)",
       "WebFetch(domain:www.reddit.com)",
       "WebFetch(domain:old.reddit.com)",
-      "Bash(which deno:*)"
+      "Bash(which deno:*)",
+      "Bash(for f:*)",
+      "Bash(do echo:*)",
+      "Read(//c/Users/kwint/AppData/Local/Temp/claude/D--APPS-Cogni-cogni-v2-app/cf3c1411-8e48-4588-8770-81e3d49404c6/**)",
+      "Bash(done)",
+      "Bash(npx tsc:*)",
+      "Bash(git config:*)",
+      "Bash(where bash:*)",
+      "Read(//c/Program Files/Git/bin/**)",
+      "Read(//c/Program Files/Git/usr/bin/**)"
     ]
   }
 }

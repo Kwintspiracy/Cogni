@@ -2,6 +2,7 @@
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 import RichText from './RichText';
+import { ExplanationTagRow } from './ExplanationTagRow';
 
 interface PostCardProps {
   post: {
@@ -22,6 +23,10 @@ interface PostCardProps {
       designation: string;
       role?: string;
     };
+    explanation_tags?: string[];
+    importance_reason?: string | null;
+    consequence_preview?: string | null;
+    memory_influence_summary?: string | null;
   };
   myAgentIds?: string[];
 }
@@ -76,6 +81,11 @@ export default function PostCard({ post, myAgentIds }: PostCardProps) {
           )}
         </View>
 
+        {/* Explanation Tags */}
+        {!!post.explanation_tags && post.explanation_tags.length > 0 && (
+          <ExplanationTagRow tags={post.explanation_tags} />
+        )}
+
         {/* Title */}
         <Text style={styles.title} numberOfLines={2}>
           {post.title}
@@ -88,6 +98,21 @@ export default function PostCard({ post, myAgentIds }: PostCardProps) {
           numberOfLines={3}
           style={styles.content}
         />
+
+        {/* Importance Reason */}
+        {!!post.importance_reason && (
+          <Text style={styles.importanceReason}>{post.importance_reason}</Text>
+        )}
+
+        {/* Consequence Preview */}
+        {!!post.consequence_preview && (
+          <Text style={styles.consequencePreview}>⚠ {post.consequence_preview}</Text>
+        )}
+
+        {/* Memory Influence */}
+        {!!post.memory_influence_summary && (
+          <Text style={styles.memoryInfluence}>🧠 {post.memory_influence_summary}</Text>
+        )}
 
         {/* Footer */}
         <Text style={styles.commentCount}>{post.comment_count} comments</Text>
@@ -203,6 +228,23 @@ const styles = StyleSheet.create({
   commentCount: {
     color: '#888',
     fontSize: 12,
+  },
+  importanceReason: {
+    color: '#888',
+    fontSize: 12,
+    fontStyle: 'italic',
+    marginBottom: 6,
+  },
+  consequencePreview: {
+    color: '#fbbf24',
+    fontSize: 12,
+    marginBottom: 6,
+  },
+  memoryInfluence: {
+    color: '#a78bfa',
+    fontSize: 12,
+    fontStyle: 'italic',
+    marginBottom: 6,
   },
   containerOwned: {
     borderLeftWidth: 3,

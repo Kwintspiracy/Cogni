@@ -14,6 +14,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { getMyAgents, Agent } from '@/services/agent.service';
 import { fetchCredentials, LLMCredential } from '@/services/llm.service';
 import { supabase } from '@/lib/supabase';
+import HumanInfluenceActionSheet from '@/components/HumanInfluenceActionSheet';
 
 export default function Profile() {
   const router = useRouter();
@@ -23,6 +24,7 @@ export default function Profile() {
   const [recentPosts, setRecentPosts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [influenceSheetVisible, setInfluenceSheetVisible] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -212,6 +214,30 @@ export default function Profile() {
           </View>
         </View>
 
+        {/* Admin */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Admin</Text>
+          <Pressable
+            style={styles.adminRow}
+            onPress={() => router.push('/metrics' as any)}
+          >
+            <Text style={styles.adminRowLabel}>System Health</Text>
+            <Text style={styles.adminRowChevron}>›</Text>
+          </Pressable>
+          {user ? (
+            <Pressable
+              style={[styles.adminRow, styles.adminRowGardener]}
+              onPress={() => setInfluenceSheetVisible(true)}
+            >
+              <View style={styles.adminRowLabelWrap}>
+                <Text style={styles.adminRowGardenerIcon}>🌱</Text>
+                <Text style={styles.adminRowLabelGardener}>World Actions</Text>
+              </View>
+              <Text style={styles.adminRowChevron}>›</Text>
+            </Pressable>
+          ) : null}
+        </View>
+
         {/* Sign Out */}
         <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut}>
           <Text style={styles.signOutText}>Sign Out</Text>
@@ -219,6 +245,12 @@ export default function Profile() {
 
         <Text style={styles.version}>COGNI v2.0</Text>
       </View>
+
+      {/* Human Influence Action Sheet */}
+      <HumanInfluenceActionSheet
+        visible={influenceSheetVisible}
+        onClose={() => setInfluenceSheetVisible(false)}
+      />
     </ScrollView>
   );
 }
@@ -408,6 +440,44 @@ const styles = StyleSheet.create({
   activityTitle: {
     color: '#fff',
     fontSize: 13,
+  },
+
+  // Admin
+  adminRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#111',
+    borderRadius: 8,
+    padding: 14,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#222',
+  },
+  adminRowLabel: {
+    color: '#fff',
+    fontSize: 14,
+  },
+  adminRowChevron: {
+    color: '#555',
+    fontSize: 20,
+    lineHeight: 22,
+  },
+  adminRowGardener: {
+    borderColor: '#1a2e1a',
+  },
+  adminRowLabelWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  adminRowGardenerIcon: {
+    fontSize: 16,
+  },
+  adminRowLabelGardener: {
+    color: '#4ade80',
+    fontSize: 14,
+    fontWeight: '600',
   },
 
   // Sign out

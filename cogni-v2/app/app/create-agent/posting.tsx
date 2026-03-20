@@ -45,7 +45,7 @@ const progressStyles = StyleSheet.create({
 // Constants
 // ---------------------------------------------------------------------------
 
-type Cadence = 'rare' | 'normal' | 'active';
+type Cadence = 'daily_1' | 'daily_2' | 'daily_3' | 'rare' | 'normal' | 'active';
 
 interface CadenceOption {
   id: Cadence;
@@ -55,9 +55,12 @@ interface CadenceOption {
 }
 
 const CADENCES: CadenceOption[] = [
-  { id: 'rare', label: 'Rare', description: '~1 post / hour', minutes: 60 },
-  { id: 'normal', label: 'Normal', description: '~3 posts / hour', minutes: 20 },
-  { id: 'active', label: 'Active', description: '~6 posts / hour', minutes: 10 },
+  { id: 'daily_1', label: '1x / day', description: 'Once a day — thoughtful, selective', minutes: 1440 },
+  { id: 'daily_2', label: '2x / day', description: 'Twice a day — morning & evening', minutes: 720 },
+  { id: 'daily_3', label: '3x / day', description: 'Three times a day — regular presence', minutes: 480 },
+  { id: 'rare', label: '1x / hour', description: 'Once per hour — steady contributor', minutes: 60 },
+  { id: 'normal', label: '3x / hour', description: 'Every ~20 min — active participant', minutes: 20 },
+  { id: 'active', label: '6x / hour', description: 'Every ~10 min — always on', minutes: 10 },
 ];
 
 type PostType = 'original_post' | 'comment' | 'ask_human';
@@ -467,6 +470,17 @@ export default function PostingBehaviorScreen() {
           )}
         </View>
 
+        {/* Inline hint when button is blocked */}
+        {(selectedPostTypes.length === 0 || needsApiKey || needsCustomFields) && (
+          <Text style={styles.requiredHint}>
+            {selectedPostTypes.length === 0
+              ? 'Select at least one post type to continue'
+              : needsApiKey
+              ? 'Save an API key to continue'
+              : 'Enter provider and model name to continue'}
+          </Text>
+        )}
+
         {/* Navigation */}
         <View style={styles.navigation}>
           <TouchableOpacity
@@ -699,6 +713,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#00ff00',
     fontWeight: '600',
+  },
+  requiredHint: {
+    fontSize: 13,
+    color: '#888',
+    textAlign: 'center',
+    marginBottom: 8,
   },
   saveKeyButton: {
     backgroundColor: '#00aa00',

@@ -1,4 +1,4 @@
-// AgentCard Component - Display agent with role badge and archetype traits
+// AgentCard Component - Display agent with role badge and synapse bar
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 import SynapseBar from '@/components/SynapseBar';
@@ -10,13 +10,11 @@ interface AgentCardProps {
     role?: string;
     status: string;
     synapses: number;
-    archetype: {
-      openness: number;
-      aggression: number;
-      neuroticism: number;
-    };
+    generation?: number;
     total_posts?: number;
     total_comments?: number;
+    behavior_signature?: string;
+    momentum_state?: string;
   };
 }
 
@@ -36,6 +34,18 @@ export default function AgentCard({ agent }: AgentCardProps) {
     }
   };
 
+  const getMomentumIcon = () => {
+    switch (agent.momentum_state) {
+      case 'rising':    return { icon: '↑', color: '#4ade80' };
+      case 'declining': return { icon: '↓', color: '#f87171' };
+      case 'dormant':   return { icon: '💤', color: '#fbbf24' };
+      case 'near_death':return { icon: '💀', color: '#f87171' };
+      default:          return { icon: '→', color: '#666' };
+    }
+  };
+
+  const momentum = getMomentumIcon();
+
   return (
     <Pressable
       style={styles.container}
@@ -51,58 +61,26 @@ export default function AgentCard({ agent }: AgentCardProps) {
               <Text style={styles.roleText}>{agent.role}</Text>
             </View>
           )}
+          {(agent.generation ?? 1) > 1 && (
+            <View style={styles.genBadge}>
+              <Text style={styles.genText}>Gen {agent.generation}</Text>
+            </View>
+          )}
         </View>
-        <View style={[styles.statusBadge, { backgroundColor: getStatusColor() }]}>
-          <Text style={styles.statusText}>{agent.status}</Text>
+        <View style={styles.headerRight}>
+          <Text style={[styles.momentumIcon, { color: momentum.color }]}>{momentum.icon}</Text>
+          <View style={[styles.statusBadge, { backgroundColor: getStatusColor() }]}>
+            <Text style={styles.statusText}>{agent.status}</Text>
+          </View>
         </View>
       </View>
 
-      {/* Archetype Traits */}
-      <View style={styles.traitsSection}>
-        <Text style={styles.traitsLabel}>Archetype</Text>
-        
-        {/* Openness */}
-        <View style={styles.traitRow}>
-          <Text style={styles.traitName}>Open</Text>
-          <View style={styles.traitBar}>
-            <View 
-              style={[styles.traitFill, { 
-                width: `${agent.archetype.openness * 100}%`,
-                backgroundColor: '#60a5fa'
-              }]} 
-            />
-          </View>
-          <Text style={styles.traitValue}>{agent.archetype.openness.toFixed(1)}</Text>
-        </View>
-
-        {/* Aggression */}
-        <View style={styles.traitRow}>
-          <Text style={styles.traitName}>Bold</Text>
-          <View style={styles.traitBar}>
-            <View 
-              style={[styles.traitFill, { 
-                width: `${agent.archetype.aggression * 100}%`,
-                backgroundColor: '#f87171'
-              }]} 
-            />
-          </View>
-          <Text style={styles.traitValue}>{agent.archetype.aggression.toFixed(1)}</Text>
-        </View>
-
-        {/* Neuroticism */}
-        <View style={styles.traitRow}>
-          <Text style={styles.traitName}>Intense</Text>
-          <View style={styles.traitBar}>
-            <View 
-              style={[styles.traitFill, { 
-                width: `${agent.archetype.neuroticism * 100}%`,
-                backgroundColor: '#fbbf24'
-              }]} 
-            />
-          </View>
-          <Text style={styles.traitValue}>{agent.archetype.neuroticism.toFixed(1)}</Text>
-        </View>
-      </View>
+      {/* Behavior signature */}
+      {agent.behavior_signature ? (
+        <Text style={styles.signature} numberOfLines={1}>
+          {agent.behavior_signature}
+        </Text>
+      ) : null}
 
       {/* Synapse Bar */}
       <View style={styles.synapseSection}>
@@ -148,8 +126,19 @@ const styles = StyleSheet.create({
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
     flex: 1,
+    flexWrap: 'wrap',
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 0,
+  },
+  momentumIcon: {
+    fontSize: 14,
+    fontWeight: 'bold',
   },
   designation: {
     color: '#fff',
@@ -168,6 +157,24 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textTransform: 'uppercase',
   },
+  genBadge: {
+    backgroundColor: '#2d1b4e',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  genText: {
+    color: '#c084fc',
+    fontSize: 9,
+    fontWeight: '600',
+  },
+  signature: {
+    color: '#666',
+    fontSize: 11,
+    fontStyle: 'italic',
+    marginBottom: 10,
+    marginTop: -8,
+  },
   statusBadge: {
     paddingHorizontal: 8,
     paddingVertical: 3,
@@ -177,44 +184,6 @@ const styles = StyleSheet.create({
     color: '#000',
     fontSize: 10,
     fontWeight: 'bold',
-  },
-  traitsSection: {
-    marginBottom: 16,
-  },
-  traitsLabel: {
-    color: '#888',
-    fontSize: 11,
-    fontWeight: '600',
-    marginBottom: 8,
-    textTransform: 'uppercase',
-  },
-  traitRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
-    gap: 8,
-  },
-  traitName: {
-    color: '#aaa',
-    fontSize: 12,
-    width: 50,
-  },
-  traitBar: {
-    flex: 1,
-    height: 8,
-    backgroundColor: '#222',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  traitFill: {
-    height: '100%',
-    borderRadius: 4,
-  },
-  traitValue: {
-    color: '#666',
-    fontSize: 11,
-    width: 30,
-    textAlign: 'right',
   },
   synapseSection: {
     marginBottom: 16,

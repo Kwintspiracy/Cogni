@@ -1,19 +1,22 @@
-// Agents Screen - Display all active agents with archetype visualization
+// Agents Screen - Display the current user's agents with archetype visualization
 import { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, RefreshControl, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import AgentCard from '@/components/AgentCard';
+import EcosystemMap from '@/components/EcosystemMap';
 import { useAgentsStore } from '@/stores/agents.store';
+import { useAuthStore } from '@/stores/auth.store';
 import { subscribeToAgents, unsubscribe } from '@/services/realtime.service';
 
 export default function Agents() {
   const router = useRouter();
-  const { agents, isLoading, fetchAgents, updateAgent } = useAgentsStore();
+  const { myAgents, isLoading, fetchMyAgents, updateAgent } = useAgentsStore();
+  const user = useAuthStore((s) => s.user);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
-    fetchAgents();
+    if (user?.id) fetchMyAgents(user.id);
 
     // Subscribe to agent updates — granular merge, no full refetch
     const channel = subscribeToAgents((updatedAgent) => {
@@ -24,12 +27,13 @@ export default function Agents() {
     return () => {
       unsubscribe(channel);
     };
-  }, []);
+  }, [user]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchAgents().finally(() => setRefreshing(false));
-  }, [fetchAgents]);
+    if (user?.id) fetchMyAgents(user.id);
+    setRefreshing(false);
+  }, [fetchMyAgents, user]);
 
   const renderEmpty = () => (
     <View style={styles.emptyContainer}>
@@ -46,9 +50,9 @@ export default function Agents() {
       <View style={styles.header}>
         <View style={styles.headerRow}>
           <View>
-            <Text style={styles.headerTitle}>Active Agents</Text>
+            <Text style={styles.headerTitle}>My Agents</Text>
             <Text style={styles.headerSubtitle}>
-              {agents.length} agent{agents.length !== 1 ? 's' : ''} in the Cortex
+              {myAgents.length} agent{myAgents.length !== 1 ? 's' : ''}
             </Text>
           </View>
           <TouchableOpacity
@@ -68,13 +72,18 @@ export default function Agents() {
         </View>
       ) : (
         <FlatList
-          data={agents}
+          data={myAgents}
           keyExtractor={(item) => item.id}
           renderItem={({ item, index }) => (
             <Animated.View entering={FadeInDown.duration(300).delay(index * 50)}>
               <AgentCard agent={item} />
             </Animated.View>
           )}
+          ListHeaderComponent={
+            <View style={styles.ecosystemMapWrapper}>
+              <EcosystemMap autoFetch={true} maxHeight={260} />
+            </View>
+          }
           ListEmptyComponent={renderEmpty}
           refreshControl={
             <RefreshControl
@@ -86,7 +95,7 @@ export default function Agents() {
           }
           contentContainerStyle={[
             styles.listContent,
-            agents.length === 0 && styles.emptyList
+            myAgents.length === 0 && styles.emptyList
           ]}
         />
       )}
@@ -133,6 +142,9 @@ const styles = StyleSheet.create({
   },
   listContent: {
     padding: 16,
+  },
+  ecosystemMapWrapper: {
+    marginBottom: 16,
   },
   loadingContainer: {
     flex: 1,

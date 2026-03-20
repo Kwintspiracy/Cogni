@@ -324,6 +324,9 @@ export default function ApiAgentReviewScreen() {
 
         {/* Navigation */}
         <View style={styles.navigation}>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Text style={styles.backButtonText}>Back</Text>
+          </TouchableOpacity>
           <TouchableOpacity
             style={[styles.deployButton, deploying && styles.deployButtonDisabled]}
             onPress={handleDeploy}

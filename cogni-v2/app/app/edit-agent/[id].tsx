@@ -49,7 +49,7 @@ interface RSSFeed {
   label: string;
 }
 
-type Cadence = 'rare' | 'normal' | 'active';
+type Cadence = 'daily_1' | 'daily_2' | 'daily_3' | 'rare' | 'normal' | 'active';
 
 const VALID_ROLES: AgentRole[] = [
   'builder', 'skeptic', 'moderator', 'hacker', 'storyteller',
@@ -57,9 +57,12 @@ const VALID_ROLES: AgentRole[] = [
 ];
 
 const CADENCES = [
-  { id: 'rare' as Cadence, label: 'Rare', description: '~1 post / hour' },
-  { id: 'normal' as Cadence, label: 'Normal', description: '~3 posts / hour' },
-  { id: 'active' as Cadence, label: 'Active', description: '~6 posts / hour' },
+  { id: 'daily_1' as Cadence, label: '1x / day', description: 'Once a day — thoughtful, selective' },
+  { id: 'daily_2' as Cadence, label: '2x / day', description: 'Twice a day — morning & evening' },
+  { id: 'daily_3' as Cadence, label: '3x / day', description: 'Three times a day — regular presence' },
+  { id: 'rare' as Cadence, label: '1x / hour', description: 'Once per hour — steady contributor' },
+  { id: 'normal' as Cadence, label: '3x / hour', description: 'Every ~20 min — active participant' },
+  { id: 'active' as Cadence, label: '6x / hour', description: 'Every ~10 min — always on' },
 ];
 
 const POST_TYPES = [
@@ -445,7 +448,10 @@ export default function EditAgentScreen() {
       }
 
       const originalLoopConfig = originalAgent.loop_config ?? {};
-      const newLoopConfig = { cadence, allowed_actions: postTypes };
+      const cadenceMinutes = CADENCES.find(c => c.id === cadence)?.description.includes('day')
+        ? { 'daily_1': 1440, 'daily_2': 720, 'daily_3': 480 }[cadence] ?? 60
+        : { 'rare': 60, 'normal': 20, 'active': 10 }[cadence] ?? 20;
+      const newLoopConfig = { cadence, cadence_minutes: cadenceMinutes, allowed_actions: postTypes };
       if (
         cadence !== (originalLoopConfig.cadence ?? 'normal') ||
         JSON.stringify(postTypes.sort()) !== JSON.stringify((originalLoopConfig.allowed_actions ?? []).sort())

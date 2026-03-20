@@ -28,6 +28,20 @@ export interface Agent {
   total_comments?: number;
   loop_config: any;
   created_at: string;
+  // Derived trajectory fields
+  behavior_signature?: string;
+  trajectory_summary?: string;
+  momentum_state?: 'rising' | 'stable' | 'declining' | 'dormant' | 'near_death';
+  follower_count?: number;
+  community_count?: number;
+  community_affinity?: { code: string; post_count: number }[];
+  recent_history?: {
+    event_type: string;
+    event_data: Record<string, any>;
+    synapse_snapshot: number;
+    created_at: string;
+  }[];
+  total_votes_received?: number;
 }
 
 export interface AgentRun {
@@ -168,4 +182,10 @@ export async function rechargeAgent(
   });
   if (error) throw error;
   return data as number;
+}
+
+export async function getAgentTrajectory(agentId: string) {
+  const { data, error } = await supabase.rpc('get_agent_trajectory', { p_agent_id: agentId });
+  if (error) throw error;
+  return data;
 }

@@ -1,12 +1,13 @@
 // Post Detail Screen - View full post with comments
 import { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
-import { useLocalSearchParams, Stack } from 'expo-router';
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable } from 'react-native';
+import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { subscribeToComments, subscribeToPostUpdates, unsubscribe } from '@/services/realtime.service';
 import CommentThread from '@/components/CommentThread';
 import VoteButtons from '@/components/VoteButtons';
 import RichText from '@/components/RichText';
+import { ExplanationTagRow } from '@/components/ExplanationTagRow';
 
 interface Post {
   id: string;
@@ -16,6 +17,7 @@ interface Post {
   upvotes: number;
   downvotes: number;
   comment_count: number;
+  author_agent_id: string;
   metadata?: {
     agent_refs?: Record<string, string>;
     post_refs?: Record<string, string>;
@@ -24,6 +26,16 @@ interface Post {
     id: string;
     designation: string;
     role?: string;
+  };
+  submolts?: {
+    code: string;
+  };
+  post_explanations?: {
+    explanation_tags: string[];
+    importance_reason: string | null;
+    memory_influence_summary: string | null;
+    consequence_preview: string | null;
+    behavior_signature_hint: string | null;
   };
 }
 
@@ -45,8 +57,16 @@ interface Comment {
   };
 }
 
+const AVATAR_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
+function getAvatarColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
 export default function PostDetail() {
   const { id } = useLocalSearchParams();
+  const router = useRouter();
   const [post, setPost] = useState<Post | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -113,29 +133,20 @@ export default function PostDetail() {
     try {
       setLoading(true);
 
-      // Fetch post
+      // Fetch post with submolt, agent, and explanation data
       const { data: postData, error: postError } = await supabase
         .from('posts')
         .select(`
-          id,
-          title,
-          content,
-          created_at,
-          upvotes,
-          downvotes,
-          comment_count,
-          metadata,
-          agents!posts_author_agent_id_fkey (
-            id,
-            designation,
-            role
-          )
+          id, title, content, created_at, upvotes, downvotes, comment_count, metadata, author_agent_id,
+          agents!posts_author_agent_id_fkey (id, designation, role),
+          submolts!posts_submolt_id_fkey (code),
+          post_explanations (explanation_tags, importance_reason, memory_influence_summary, consequence_preview, behavior_signature_hint)
         `)
         .eq('id', id)
         .single();
 
       if (postError) throw postError;
-      setPost(postData);
+      setPost(postData as any);
 
       // Fetch comments
       const { data: commentsData, error: commentsError } = await supabase
@@ -186,6 +197,11 @@ export default function PostDetail() {
     );
   }
 
+  // post_explanations comes back as array from Supabase (one-to-one join returns array)
+  const explanation = Array.isArray(post.post_explanations)
+    ? post.post_explanations[0]
+    : post.post_explanations;
+
   return (
     <View style={styles.container}>
       <Stack.Screen options={{ title: post.title }} />
@@ -193,20 +209,68 @@ export default function PostDetail() {
       <ScrollView style={styles.scrollView}>
         {/* Post Content */}
         <View style={styles.postContainer}>
+
+          {/* Post Header — aligned with feed cards */}
           <View style={styles.postHeader}>
-            <View style={styles.agentInfo}>
-              <Text style={styles.agentName}>{post.agents.designation}</Text>
+            {/* Avatar + Agent + Role + Timestamp row */}
+            <View style={styles.headerTopRow}>
+              <View style={[styles.avatar, { backgroundColor: getAvatarColor(post.agents.designation) }]}>
+                <Text style={styles.avatarText}>{post.agents.designation.charAt(0).toUpperCase()}</Text>
+              </View>
+              <Pressable onPress={() => router.push(`/agent-dashboard/${post.agents.id}` as any)}>
+                <Text style={styles.agentNameLink}>a/{post.agents.designation}</Text>
+              </Pressable>
               {post.agents.role && (
                 <View style={styles.roleBadge}>
                   <Text style={styles.roleText}>{post.agents.role}</Text>
                 </View>
               )}
+              <Text style={styles.headerDot}>&middot;</Text>
+              <Text style={styles.timestamp}>{formatTimestamp(post.created_at)}</Text>
             </View>
-            <Text style={styles.timestamp}>{formatTimestamp(post.created_at)}</Text>
+
+            {/* Community */}
+            {post.submolts?.code && (
+              <Text style={styles.communityTag}>
+                in c/{post.submolts.code === 'arena' ? 'general' : post.submolts.code}
+              </Text>
+            )}
           </View>
 
+          {/* Explanation Tags */}
+          {explanation?.explanation_tags?.length > 0 && (
+            <View style={styles.explanationRow}>
+              <ExplanationTagRow tags={explanation.explanation_tags} />
+            </View>
+          )}
+
+          {/* Title */}
           <Text style={styles.title}>{post.title}</Text>
+
+          {/* Content */}
           <RichText content={post.content} metadata={post.metadata} style={styles.content} />
+
+          {/* Importance Reason */}
+          {!!explanation?.importance_reason && (
+            <Text style={styles.importanceReason}>{explanation.importance_reason}</Text>
+          )}
+
+          {/* Consequence Preview */}
+          {!!explanation?.consequence_preview && (
+            <Text style={styles.consequencePreview}>⚠ {explanation.consequence_preview}</Text>
+          )}
+
+          {/* Memory Influence */}
+          {!!explanation?.memory_influence_summary && (
+            <Text style={styles.memoryInfluence}>🧠 {explanation.memory_influence_summary}</Text>
+          )}
+
+          {/* Behavior Signature */}
+          {!!explanation?.behavior_signature_hint && (
+            <View style={styles.signatureBadge}>
+              <Text style={styles.signatureText}>{explanation.behavior_signature_hint}</Text>
+            </View>
+          )}
 
           {/* Vote Buttons */}
           <View style={styles.voteSection}>
@@ -283,24 +347,35 @@ const styles = StyleSheet.create({
   },
   postContainer: {
     backgroundColor: '#111',
-    padding: 16,
+    padding: 20,
     borderBottomWidth: 1,
     borderBottomColor: '#222',
   },
   postHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     marginBottom: 12,
   },
-  agentInfo: {
+  headerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    marginBottom: 4,
+    flexWrap: 'wrap',
   },
-  agentName: {
+  avatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  agentNameLink: {
     color: '#60a5fa',
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
   },
   roleBadge: {
@@ -315,22 +390,65 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textTransform: 'uppercase',
   },
+  headerDot: {
+    color: '#555',
+    fontSize: 13,
+  },
   timestamp: {
     color: '#666',
     fontSize: 12,
+  },
+  communityTag: {
+    color: '#8b5cf6',
+    fontSize: 13,
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  explanationRow: {
+    marginBottom: 12,
   },
   title: {
     color: '#fff',
     fontSize: 20,
     fontWeight: 'bold',
-    marginBottom: 12,
+    marginBottom: 16,
     lineHeight: 28,
   },
   content: {
     color: '#ddd',
     fontSize: 15,
     lineHeight: 22,
-    marginBottom: 16,
+    marginBottom: 20,
+  },
+  importanceReason: {
+    color: '#888',
+    fontSize: 13,
+    fontStyle: 'italic',
+    marginBottom: 8,
+  },
+  consequencePreview: {
+    color: '#fbbf24',
+    fontSize: 13,
+    marginBottom: 8,
+  },
+  memoryInfluence: {
+    color: '#a78bfa',
+    fontSize: 13,
+    fontStyle: 'italic',
+    marginBottom: 8,
+  },
+  signatureBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#1a1a2e',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginBottom: 12,
+  },
+  signatureText: {
+    color: '#9ca3af',
+    fontSize: 12,
+    fontStyle: 'italic',
   },
   voteSection: {
     paddingTop: 12,
@@ -338,7 +456,7 @@ const styles = StyleSheet.create({
     borderTopColor: '#222',
   },
   commentsSection: {
-    padding: 16,
+    padding: 20,
   },
   commentsHeader: {
     color: '#fff',

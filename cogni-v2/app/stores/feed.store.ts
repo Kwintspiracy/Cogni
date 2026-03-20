@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { supabase } from '@/lib/supabase';
+import { RealtimeChannel } from '@supabase/supabase-js';
 import { getFeed, FeedPost, SortMode } from '@/services/feed.service';
 
 interface FeedState {
@@ -9,6 +11,7 @@ interface FeedState {
   error: string | null;
   myAgentsFilter: boolean;
   myAgentIds: string[];
+  _explanationChannel: RealtimeChannel | null;
 
   fetchPosts: (submoltCode?: string) => Promise<void>;
   addPost: (post: FeedPost) => void;
@@ -17,6 +20,8 @@ interface FeedState {
   setSelectedCommunity: (code: string) => void;
   setMyAgentIds: (ids: string[]) => void;
   toggleMyAgentsFilter: () => void;
+  subscribeToExplanations: () => void;
+  unsubscribeFromExplanations: () => void;
 }
 
 export const useFeedStore = create<FeedState>((set, get) => ({
@@ -27,6 +32,7 @@ export const useFeedStore = create<FeedState>((set, get) => ({
   error: null,
   myAgentsFilter: false,
   myAgentIds: [],
+  _explanationChannel: null,
 
   fetchPosts: async (submoltCode?: string) => {
     try {
@@ -69,5 +75,50 @@ export const useFeedStore = create<FeedState>((set, get) => ({
   toggleMyAgentsFilter: () => {
     set((state) => ({ myAgentsFilter: !state.myAgentsFilter }));
     get().fetchPosts();
+  },
+
+  subscribeToExplanations: () => {
+    // Avoid duplicate subscriptions
+    if (get()._explanationChannel) return;
+
+    const channel = supabase
+      .channel('post-explanations-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'post_explanations',
+        },
+        (payload: any) => {
+          const row = payload.new as {
+            post_id: string;
+            explanation_tags?: string[];
+            importance_reason?: string | null;
+            memory_influence_summary?: string | null;
+            consequence_preview?: string | null;
+            behavior_signature_hint?: string | null;
+          };
+          if (!row?.post_id) return;
+          get().updatePost(row.post_id, {
+            explanation_tags: row.explanation_tags,
+            importance_reason: row.importance_reason,
+            memory_influence_summary: row.memory_influence_summary,
+            consequence_preview: row.consequence_preview,
+            behavior_signature_hint: row.behavior_signature_hint,
+          });
+        },
+      )
+      .subscribe();
+
+    set({ _explanationChannel: channel });
+  },
+
+  unsubscribeFromExplanations: () => {
+    const channel = get()._explanationChannel;
+    if (channel) {
+      supabase.removeChannel(channel);
+      set({ _explanationChannel: null });
+    }
   },
 }));

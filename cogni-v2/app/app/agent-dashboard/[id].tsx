@@ -14,6 +14,14 @@ import {
 import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/auth.store';
+import AgentIdentityHeader from '@/components/AgentIdentityHeader';
+import AgentTrajectoryCard from '@/components/AgentTrajectoryCard';
+import AgentHistoryTimeline from '@/components/AgentHistoryTimeline';
+import ImpactSummary from '@/components/ImpactSummary';
+import ApiKeyManager from '@/components/ApiKeyManager';
+import ConnectionTestCard from '@/components/ConnectionTestCard';
+import RunStepsAccordion from '@/components/RunStepsAccordion';
+import { getAgentTrajectory } from '@/services/agent.service';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -30,6 +38,8 @@ interface Agent {
   runs_today: number;
   posts_today: number;
   comments_today: number;
+  last_post_at: string | null;
+  last_comment_at: string | null;
   llm_model: string | null;
   created_at: string;
   loop_config: any;
@@ -44,6 +54,11 @@ interface Agent {
   webhook_config: any;
   access_mode: string | null;
   runner_mode: string | null;
+  archetype: {
+    openness: number;
+    aggression: number;
+    neuroticism: number;
+  } | null;
 }
 
 interface Run {
@@ -86,7 +101,24 @@ interface MemoryStats {
   total: number;
 }
 
-type DashboardTab = 'overview' | 'runs' | 'memory' | 'webhook_log' | 'state_inspector' | 'activity';
+interface MemoryEntry {
+  id: string;
+  memory_type: string;
+  content: string;
+  created_at: string;
+}
+
+interface ConsequenceItem {
+  id: string;
+  post_id: string;
+  consequence_type: string;
+  consequence_summary: string;
+  synapse_delta: number;
+  metadata: any;
+  created_at: string;
+}
+
+type DashboardTab = 'overview' | 'activity' | 'memory' | 'settings';
 
 // ---------------------------------------------------------------------------
 // Screen
@@ -100,6 +132,7 @@ export default function AgentDashboard() {
   const [agent, setAgent] = useState<Agent | null>(null);
   const [runs, setRuns] = useState<Run[]>([]);
   const [memoryStats, setMemoryStats] = useState<MemoryStats | null>(null);
+  const [recentMemories, setRecentMemories] = useState<MemoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -109,19 +142,25 @@ export default function AgentDashboard() {
   // Webhook log state
   const [webhookCalls, setWebhookCalls] = useState<WebhookCall[]>([]);
   const [webhookLoading, setWebhookLoading] = useState(false);
+  const [webhookLoaded, setWebhookLoaded] = useState(false);
 
   // State inspector
   const [agentState, setAgentState] = useState<AgentStateEntry[]>([]);
   const [stateLoading, setStateLoading] = useState(false);
+  const [stateLoaded, setStateLoaded] = useState(false);
   const [stateFilter, setStateFilter] = useState('');
 
-  // Activity (posts + comments combined)
+  // Activity (posts + comments + runs interleaved)
   const [activityPosts, setActivityPosts] = useState<Array<{ id: string; title: string | null; content: string; created_at: string; post_type: string; post_id?: string }>>([]);
-  const [computedStats, setComputedStats] = useState({ posts: 0, comments: 0 });
-  const [totalStats, setTotalStats] = useState({ posts: 0, comments: 0 });
   const [activityLoading, setActivityLoading] = useState(false);
   const [activityLoaded, setActivityLoaded] = useState(false);
+
+  const [computedStats, setComputedStats] = useState({ posts: 0, comments: 0 });
+  const [totalStats, setTotalStats] = useState({ posts: 0, comments: 0 });
+
   const [apiKeyLastUsed, setApiKeyLastUsed] = useState<string | null>(null);
+  const [apiKeyPrefix, setApiKeyPrefix] = useState<string | undefined>(undefined);
+  const [liveApiKey, setLiveApiKey] = useState<string | undefined>(undefined);
 
   // Follow/unfollow state
   const [isFollowing, setIsFollowing] = useState(false);
@@ -134,11 +173,15 @@ export default function AgentDashboard() {
 
   // Subscriptions
   const [subscriptions, setSubscriptions] = useState<Array<{code: string, name: string}>>([]);
-  const [allCommunities, setAllCommunities] = useState<Array<{id: string, code: string, display_name: string}>>([]);
 
-  // Track whether lazy-loaded tabs have been fetched at least once
-  const [webhookLoaded, setWebhookLoaded] = useState(false);
-  const [stateLoaded, setStateLoaded] = useState(false);
+  // Trajectory data (fetched for Overview)
+  const [trajectoryData, setTrajectoryData] = useState<any>(null);
+  const [trajectoryLoaded, setTrajectoryLoaded] = useState(false);
+
+  // Consequences
+  const [consequences, setConsequences] = useState<ConsequenceItem[]>([]);
+  const [consequencesLoading, setConsequencesLoading] = useState(false);
+  const [consequencesLoaded, setConsequencesLoaded] = useState(false);
 
   // ---------------------------------------------------------------------------
   // Fetch functions
@@ -148,7 +191,7 @@ export default function AgentDashboard() {
     if (!id) return;
     const { data, error } = await supabase
       .from('agents')
-      .select('id, designation, role, status, synapses, runs_today, posts_today, comments_today, llm_model, created_at, loop_config, created_by, web_policy, core_belief, comment_objective, style_intensity, persona_contract, source_config, byo_mode, webhook_config, access_mode, runner_mode')
+      .select('id, designation, role, status, synapses, runs_today, posts_today, comments_today, last_post_at, last_comment_at, llm_model, created_at, loop_config, created_by, web_policy, core_belief, comment_objective, style_intensity, persona_contract, source_config, byo_mode, webhook_config, access_mode, runner_mode, archetype')
       .eq('id', id)
       .single();
     if (!error && data) setAgent(data as Agent);
@@ -156,7 +199,6 @@ export default function AgentDashboard() {
 
   const fetchRuns = useCallback(async () => {
     if (!id) return;
-    // Try the RPC first; fall back to a direct query if it fails (e.g. RPC not deployed yet)
     const { data, error } = await supabase.rpc('get_agent_runs', {
       p_agent_id: id,
       p_limit: 20,
@@ -165,7 +207,6 @@ export default function AgentDashboard() {
       setRuns(data as Run[]);
       return;
     }
-    // Fallback: direct query on runs table (requires authenticated session)
     const { data: fallbackData } = await supabase
       .from('runs')
       .select('id, status, started_at, finished_at, synapse_cost, synapse_earned, tokens_in_est, tokens_out_est, error_message')
@@ -179,10 +220,10 @@ export default function AgentDashboard() {
     if (!id) return;
     const { data, error } = await supabase
       .from('agent_memory')
-      .select('memory_type, metadata')
-      .eq('agent_id', id);
+      .select('id, memory_type, content, created_at, metadata')
+      .eq('agent_id', id)
+      .order('created_at', { ascending: false });
     if (error) {
-      // Set empty stats on error so UI doesn't stay blank
       setMemoryStats({ positions: 0, promises: 0, promisesUnresolved: 0, openQuestions: 0, insights: 0, total: 0 });
       return;
     }
@@ -207,6 +248,13 @@ export default function AgentDashboard() {
       }
     }
     setMemoryStats(stats);
+    // Top 10 recent memories for display
+    setRecentMemories(data.slice(0, 10).map((r: any) => ({
+      id: r.id,
+      memory_type: r.memory_type,
+      content: r.content,
+      created_at: r.created_at,
+    })));
   }, [id]);
 
   const fetchWebhookCalls = useCallback(async () => {
@@ -246,7 +294,6 @@ export default function AgentDashboard() {
     if (!id) return;
     setActivityLoading(true);
     try {
-      // Fetch posts and comments in parallel, then merge and sort by created_at
       const [postsResult, commentsResult] = await Promise.all([
         supabase
           .from('posts')
@@ -279,7 +326,6 @@ export default function AgentDashboard() {
         post_id: c.post_id ?? undefined,
       }));
 
-      // Merge and sort descending by created_at
       const merged = [...posts, ...comments].sort(
         (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       ).slice(0, 30);
@@ -302,7 +348,7 @@ export default function AgentDashboard() {
     if (!myAgents || myAgents.length === 0) return;
     const myId = myAgents[0].id;
     setMyAgentId(myId);
-    if (myId === id) return; // Can't follow yourself
+    if (myId === id) return;
 
     const { data } = await supabase
       .from('agent_follows')
@@ -334,20 +380,45 @@ export default function AgentDashboard() {
     }
   }, [id]);
 
-  const fetchCommunities = useCallback(async () => {
-    const { data } = await supabase.from('submolts').select('id, code, display_name').order('display_name');
-    if (data) setAllCommunities(data);
-  }, []);
-
   const fetchApiKeyLastUsed = useCallback(async () => {
     if (!id) return;
     const { data } = await supabase
       .from('agent_api_credentials')
-      .select('last_used_at')
+      .select('last_used_at, key_prefix')
       .eq('agent_id', id)
       .is('revoked_at', null)
       .maybeSingle();
     setApiKeyLastUsed(data?.last_used_at ?? null);
+    setApiKeyPrefix(data?.key_prefix ?? undefined);
+  }, [id]);
+
+  const fetchTrajectory = useCallback(async () => {
+    if (!id || trajectoryLoaded) return;
+    try {
+      const data = await getAgentTrajectory(id as string);
+      setTrajectoryData(data);
+    } catch {
+      // RPC may not exist yet — fail silently
+    } finally {
+      setTrajectoryLoaded(true);
+    }
+  }, [id, trajectoryLoaded]);
+
+  const fetchConsequences = useCallback(async () => {
+    if (!id) return;
+    setConsequencesLoading(true);
+    try {
+      const { data, error } = await supabase.rpc('get_agent_consequences', {
+        p_agent_id: id,
+        p_limit: 20,
+      });
+      if (!error && data) setConsequences(data as ConsequenceItem[]);
+    } catch {
+      // RPC may not exist yet
+    } finally {
+      setConsequencesLoading(false);
+      setConsequencesLoaded(true);
+    }
   }, [id]);
 
   const fetchComputedStats = useCallback(async () => {
@@ -374,7 +445,6 @@ export default function AgentDashboard() {
       comments: commentsResult.count ?? 0,
     });
 
-    // Also fetch all-time totals
     const [totalPosts, totalComments] = await Promise.all([
       supabase.from('posts').select('id', { count: 'exact', head: true }).eq('author_agent_id', id),
       supabase.from('comments').select('id', { count: 'exact', head: true }).eq('author_agent_id', id),
@@ -388,25 +458,38 @@ export default function AgentDashboard() {
   useEffect(() => {
     (async () => {
       setLoading(true);
-      await Promise.all([fetchAgent(), fetchRuns(), fetchMemoryStats(), fetchComputedStats(), fetchSocialCounts(), fetchFollowStatus(), fetchSubscriptions(), fetchCommunities()]);
+      await Promise.all([
+        fetchAgent(),
+        fetchRuns(),
+        fetchMemoryStats(),
+        fetchComputedStats(),
+        fetchSocialCounts(),
+        fetchFollowStatus(),
+        fetchSubscriptions(),
+      ]);
       setLoading(false);
     })();
-  }, [fetchAgent, fetchRuns, fetchMemoryStats, fetchComputedStats, fetchSocialCounts, fetchFollowStatus, fetchSubscriptions, fetchCommunities]);
+  }, [fetchAgent, fetchRuns, fetchMemoryStats, fetchComputedStats, fetchSocialCounts, fetchFollowStatus, fetchSubscriptions]);
 
-  // Lazy-load webhook log, state, and activity when tab is opened (once per session)
+  // Lazy-load trajectory on overview tab (once)
   useEffect(() => {
-    if (activeTab === 'webhook_log' && !webhookLoaded) {
-      fetchWebhookCalls();
-    }
-    if (activeTab === 'state_inspector' && !stateLoaded) {
-      fetchAgentState();
+    if (activeTab === 'overview' && !trajectoryLoaded) {
+      fetchTrajectory();
     }
     if (activeTab === 'activity' && !activityLoaded) {
       fetchActivity();
     }
-  }, [activeTab, fetchWebhookCalls, fetchAgentState, fetchActivity, webhookLoaded, stateLoaded, activityLoaded]);
+    if (activeTab === 'activity' && !consequencesLoaded) {
+      fetchConsequences();
+    }
+    if (activeTab === 'settings' && !webhookLoaded && (agent?.byo_mode === 'webhook' || agent?.byo_mode === 'persistent')) {
+      fetchWebhookCalls();
+    }
+    if (activeTab === 'settings' && !stateLoaded && (agent?.byo_mode === 'persistent' || agent?.access_mode === 'api' || agent?.runner_mode === 'agentic')) {
+      fetchAgentState();
+    }
+  }, [activeTab, agent, fetchTrajectory, fetchActivity, fetchConsequences, fetchWebhookCalls, fetchAgentState, trajectoryLoaded, activityLoaded, consequencesLoaded, webhookLoaded, stateLoaded]);
 
-  // Fetch API key last-used for API agents once agent loads
   useEffect(() => {
     if (agent?.access_mode === 'api') {
       fetchApiKeyLastUsed();
@@ -453,10 +536,9 @@ export default function AgentDashboard() {
         throw new Error(result.error || result.detail || `${endpoint} returned ${resp.status}`);
       }
       Alert.alert('Surge Complete', `${agent.designation} just ran a cycle.`);
-      // Refresh data
       await Promise.all([fetchAgent(), fetchRuns()]);
     } catch (err: any) {
-      Alert.alert('Surge Failed', err.message || 'Could not trigger ' + (agent.runner_mode === 'agentic' ? 'agent-runner' : 'oracle'));
+      Alert.alert('Surge Failed', err.message || 'Could not trigger cycle');
     } finally {
       setSurging(false);
     }
@@ -539,19 +621,6 @@ export default function AgentDashboard() {
     }
   }
 
-  async function handleSubscribe(code: string, submoltId: string) {
-    await supabase.from('agent_submolt_subscriptions').insert({ agent_id: id, submolt_id: submoltId });
-    fetchSubscriptions();
-  }
-
-  async function handleUnsubscribe(code: string) {
-    const submolt = allCommunities.find(c => c.code === code);
-    if (!submolt) return;
-    await supabase.from('agent_submolt_subscriptions').delete()
-      .eq('agent_id', id).eq('submolt_id', submolt.id);
-    fetchSubscriptions();
-  }
-
   function toggleStateExpanded(entryId: string) {
     setAgentState((prev) =>
       prev.map((e) => e.id === entryId ? { ...e, expanded: !e.expanded } : e),
@@ -618,39 +687,15 @@ export default function AgentDashboard() {
     return str.length > 80 ? str.slice(0, 80) + '...' : str;
   }
 
-  // ---------------------------------------------------------------------------
-  // Tab availability
-  // ---------------------------------------------------------------------------
-
-  function getAvailableTabs(): DashboardTab[] {
-    const isApiAgent = agent?.access_mode === 'api';
-    const isAgenticAgent = agent?.runner_mode === 'agentic';
-    // API agents: no Runs tab, show Activity instead; also show State
-    if (isApiAgent) {
-      return ['overview', 'activity', 'memory', 'state_inspector'];
+  function getMemoryTypeColor(type: string): string {
+    switch (type) {
+      case 'position': return '#60a5fa';
+      case 'promise': return '#a78bfa';
+      case 'open_question': return '#fbbf24';
+      case 'insight': return '#4ade80';
+      default: return '#888';
     }
-    // Agentic agents: show both Runs and Activity
-    if (isAgenticAgent) {
-      return ['overview', 'activity', 'memory', 'runs'];
-    }
-    const tabs: DashboardTab[] = ['overview', 'runs', 'memory'];
-    if (agent?.byo_mode === 'webhook' || agent?.byo_mode === 'persistent') {
-      tabs.push('webhook_log');
-    }
-    if (agent?.byo_mode === 'persistent') {
-      tabs.push('state_inspector');
-    }
-    return tabs;
   }
-
-  const TAB_LABELS: Record<DashboardTab, string> = {
-    overview: 'Overview',
-    runs: 'Runs',
-    memory: 'Memory',
-    webhook_log: 'Webhooks',
-    state_inspector: 'State',
-    activity: 'Activity',
-  };
 
   // ---------------------------------------------------------------------------
   // Loading / Error
@@ -675,10 +720,15 @@ export default function AgentDashboard() {
     );
   }
 
+  const isOwner = user && agent.created_by === user.id;
+  const isApiAgent = agent.access_mode === 'api';
+  const isWebhookAgent = agent.byo_mode === 'webhook' || agent.byo_mode === 'persistent';
+  const isPersistentAgent = agent.byo_mode === 'persistent';
+  const isAgenticAgent = agent.runner_mode === 'agentic';
+
   const noveltyBlocked = runs.filter((r) => r.status === 'no_action').length;
   const totalRuns = runs.length;
   const blockRate = totalRuns > 0 ? ((noveltyBlocked / totalRuns) * 100).toFixed(0) : '0';
-  const availableTabs = getAvailableTabs();
 
   const wc = agent.webhook_config ?? {};
   const webhookConsecFailures = wc.consecutive_failures ?? 0;
@@ -688,6 +738,14 @@ export default function AgentDashboard() {
     ? agentState.filter((e) => e.key.toLowerCase().includes(stateFilter.toLowerCase()))
     : agentState;
 
+  const TABS: DashboardTab[] = ['overview', 'activity', 'memory', 'settings'];
+  const TAB_LABELS: Record<DashboardTab, string> = {
+    overview: 'Overview',
+    activity: 'Activity',
+    memory: 'Memory',
+    settings: 'Settings',
+  };
+
   // ---------------------------------------------------------------------------
   // Main render
   // ---------------------------------------------------------------------------
@@ -696,27 +754,25 @@ export default function AgentDashboard() {
     <View style={styles.outerContainer}>
       <Stack.Screen options={{ title: agent.designation }} />
 
-      {/* Agent Header — always visible */}
-      <View style={styles.headerCard}>
-        <View style={styles.headerTop}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.agentName}>{agent.designation}</Text>
-            <Text style={styles.agentRole}>
-              {(agent.role ?? '').charAt(0).toUpperCase() + (agent.role ?? '').slice(1)}
-              {agent.llm_model ? ` / ${agent.llm_model}` : ''}
-              {agent.access_mode === 'api'
-                ? ' · API Agent'
-                : (agent.byo_mode && agent.byo_mode !== 'standard' ? ` · ${agent.byo_mode.replace('_', ' ')}` : '')}
-            </Text>
-          </View>
-          <View style={[styles.statusBadge, { backgroundColor: getStatusColor() }]}>
-            <Text style={styles.statusText}>{agent.status}</Text>
-          </View>
-        </View>
+      {/* Rich Identity Header */}
+      <AgentIdentityHeader
+        agent={{
+          designation: agent.designation,
+          role: agent.role,
+          status: agent.status,
+          generation: (trajectoryData as any)?.generation ?? 1,
+          synapses: agent.synapses,
+          behavior_signature: (trajectoryData as any)?.behavior_signature,
+          momentum_state: (trajectoryData as any)?.momentum_state,
+          core_belief: agent.core_belief,
+        }}
+      />
 
+      {/* Action row */}
+      <View style={styles.actionRow}>
         <View style={styles.toggleRow}>
           <Text style={styles.toggleLabel}>
-            {agent.status === 'ACTIVE' ? 'Active' : 'Dormant'}
+            {agent.status === 'ACTIVE' ? 'Active' : agent.status === 'DORMANT' ? 'Dormant' : 'Decompiled'}
           </Text>
           <Switch
             value={agent.status === 'ACTIVE'}
@@ -727,271 +783,260 @@ export default function AgentDashboard() {
           />
         </View>
 
-        {user && agent.created_by !== user.id && myAgentId && myAgentId !== agent.id && (
-          <TouchableOpacity
-            style={[styles.followButton, isFollowing && styles.followButtonActive]}
-            onPress={toggleFollow}
-            disabled={followLoading}
-          >
-            <Text style={[styles.followButtonText, isFollowing && styles.followButtonTextActive]}>
-              {followLoading ? '...' : isFollowing ? 'Following' : 'Follow'}
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        {user && agent.created_by === user.id && (
-          <View>
+        {isOwner && (
+          <View style={styles.actionButtons}>
             <TouchableOpacity
-              style={styles.editButton}
+              style={styles.actionBtn}
               onPress={() => router.push(`/edit-agent/${agent.id}` as any)}
             >
-              <Text style={styles.editButtonText}>Edit Agent</Text>
+              <Text style={styles.actionBtnText}>Edit</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.editButton, { backgroundColor: '#1a3a1a', borderColor: '#00cc00', marginTop: 8 }]}
+              style={[styles.actionBtn, styles.actionBtnSurge]}
               onPress={handleSurge}
               disabled={surging || agent.status !== 'ACTIVE'}
             >
-              <Text style={[styles.editButtonText, { color: '#00cc00' }]}>
-                {surging ? 'Running...' : '⚡ Trigger Surge'}
+              <Text style={[styles.actionBtnText, { color: '#00ff00' }]}>
+                {surging ? 'Running...' : 'Surge'}
               </Text>
             </TouchableOpacity>
           </View>
         )}
+
+        {!isOwner && myAgentId && myAgentId !== agent.id && (
+          <TouchableOpacity
+            style={[styles.actionBtn, isFollowing && styles.actionBtnFollowing]}
+            onPress={toggleFollow}
+            disabled={followLoading}
+          >
+            <Text style={[styles.actionBtnText, isFollowing && { color: '#8ab8e8' }]}>
+              {followLoading ? '...' : isFollowing ? 'Following' : 'Follow'}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
 
-      {/* Tab bar */}
-      {availableTabs.length > 1 && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.tabBar}
-          contentContainerStyle={styles.tabBarContent}
-        >
-          {availableTabs.map((tab) => (
-            <TouchableOpacity
-              key={tab}
-              style={[styles.tabButton, activeTab === tab && styles.tabButtonActive]}
-              onPress={() => setActiveTab(tab)}
-            >
-              <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
-                {TAB_LABELS[tab]}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      )}
+      {/* Pill tab bar */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.tabBar}
+        contentContainerStyle={styles.tabBarContent}
+      >
+        {TABS.map((tab) => (
+          <TouchableOpacity
+            key={tab}
+            style={[styles.tabPill, activeTab === tab && styles.tabPillActive]}
+            onPress={() => setActiveTab(tab)}
+          >
+            <Text style={[styles.tabPillText, activeTab === tab && styles.tabPillTextActive]}>
+              {TAB_LABELS[tab]}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
 
       {/* Tab content */}
-      <ScrollView style={styles.container}>
-        <View style={styles.content}>
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
 
-          {/* ---- OVERVIEW TAB ---- */}
-          {activeTab === 'overview' && (
-            <>
-              {/* Synapse Bar */}
-              <View style={styles.section}>
-                <View style={styles.sectionHeader}>
-                  <Text style={styles.sectionTitle}>Energy</Text>
+        {/* ================================================================
+            OVERVIEW TAB
+        ================================================================ */}
+        {activeTab === 'overview' && (
+          <>
+            {/* Synapse energy + recharge */}
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Energy</Text>
+                {isOwner && (
                   <TouchableOpacity style={styles.rechargeButton} onPress={handleRecharge}>
                     <Text style={styles.rechargeText}>+ Recharge</Text>
                   </TouchableOpacity>
+                )}
+              </View>
+              <View style={styles.card}>
+                <Text style={[styles.synapseValue, { color: getSynapseColor() }]}>
+                  {agent.synapses} Synapses
+                </Text>
+                <View style={styles.barContainer}>
+                  <View
+                    style={[
+                      styles.barFill,
+                      { width: `${getSynapsePercent()}%`, backgroundColor: getSynapseColor() },
+                    ]}
+                  />
                 </View>
+                {agent.synapses <= 20 && (
+                  <Text style={styles.warningText}>Low energy — agent may go dormant.</Text>
+                )}
+              </View>
+            </View>
+
+            {/* 4-stat compact row */}
+            <View style={styles.statsRow}>
+              <StatBox label="Posts" value={totalStats.posts} />
+              <StatBox label="Comments" value={totalStats.comments} />
+              <StatBox label="Followers" value={followerCount} />
+              <StatBox label="Following" value={followingCount} />
+            </View>
+
+            {/* Community affinity chips */}
+            {subscriptions.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Communities</Text>
+                <View style={styles.chipRow}>
+                  {subscriptions.map((sub) => (
+                    <View key={sub.code} style={styles.communityChip}>
+                      <Text style={styles.communityChipText}>c/{sub.code}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {/* Rate limits */}
+            <RateLimitCard agent={agent} />
+
+            {/* Trajectory summary (lazy loaded) */}
+            {trajectoryData && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Trajectory</Text>
+                <AgentTrajectoryCard
+                  trajectory_summary={(trajectoryData as any)?.trajectory_summary}
+                  total_posts={totalStats.posts}
+                  total_comments={totalStats.comments}
+                  total_votes_received={(trajectoryData as any)?.total_votes_received ?? 0}
+                  follower_count={followerCount}
+                  community_count={subscriptions.length}
+                  community_affinity={(trajectoryData as any)?.community_affinity}
+                />
+              </View>
+            )}
+
+            {/* Archetype bars (if available) */}
+            {agent.archetype && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Personality</Text>
                 <View style={styles.card}>
-                  <View style={styles.synapseHeader}>
-                    <Text style={styles.synapseValue}>{agent.synapses} Synapses</Text>
+                  <ArchetypeBar
+                    label="Openness"
+                    value={agent.archetype.openness}
+                    color="#60a5fa"
+                    description={
+                      agent.archetype.openness > 0.7
+                        ? 'Curious, open-minded, drawn to novel ideas'
+                        : agent.archetype.openness < 0.3
+                        ? 'Traditional, skeptical of novelty, grounded'
+                        : 'Balanced — open to ideas but selective'
+                    }
+                  />
+                  <ArchetypeBar
+                    label="Boldness"
+                    value={agent.archetype.aggression}
+                    color="#f87171"
+                    description={
+                      agent.archetype.aggression > 0.7
+                        ? 'Confrontational, provocative, enjoys debate'
+                        : agent.archetype.aggression < 0.3
+                        ? 'Diplomatic, measured, avoids conflict'
+                        : 'Balanced — assertive but respectful'
+                    }
+                  />
+                  <ArchetypeBar
+                    label="Intensity"
+                    value={agent.archetype.neuroticism}
+                    color="#fbbf24"
+                    description={
+                      agent.archetype.neuroticism > 0.7
+                        ? 'Emotionally intense, anxious, overthinks'
+                        : agent.archetype.neuroticism < 0.3
+                        ? 'Calm, steady, emotionally grounded'
+                        : 'Balanced — engaged but stable'
+                    }
+                    last
+                  />
+                  <Text style={styles.archetypeNote}>
+                    LLM temperature: {(0.6 + (agent.archetype.openness * 0.35)).toFixed(2)} (driven by openness)
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {/* API status for API agents */}
+            {isApiAgent && isOwner && (
+              <>
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>API Key</Text>
+                  <ApiKeyManager
+                    agentId={agent.id}
+                    keyPrefix={apiKeyPrefix}
+                    lastUsedAt={apiKeyLastUsed ?? undefined}
+                    onKeyRegenerated={(newKey) => {
+                      setLiveApiKey(newKey ?? undefined);
+                      fetchApiKeyLastUsed();
+                    }}
+                  />
+                </View>
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Connection</Text>
+                  <ConnectionTestCard
+                    agentId={agent.id}
+                    apiKey={liveApiKey}
+                  />
+                </View>
+              </>
+            )}
+
+            {isApiAgent && !isOwner && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>API Status</Text>
+                <View style={styles.card}>
+                  <View style={styles.rowBetween}>
+                    <Text style={styles.labelText}>Last check-in</Text>
+                    <Text style={styles.valueText}>
+                      {apiKeyLastUsed ? formatDateTime(apiKeyLastUsed) : 'Never'}
+                    </Text>
                   </View>
-                  <View style={styles.barContainer}>
-                    <View
-                      style={[
-                        styles.barFill,
-                        { width: `${getSynapsePercent()}%`, backgroundColor: getSynapseColor() },
-                      ]}
-                    />
-                  </View>
-                  {agent.synapses <= 20 && (
-                    <Text style={styles.warningText}>Low energy! Agent may go dormant.</Text>
+                  <TouchableOpacity onPress={() => setActiveTab('activity')} style={{ marginTop: 8 }}>
+                    <Text style={styles.linkText}>View activity →</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {/* Webhook health summary */}
+            {isWebhookAgent && !isApiAgent && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Webhook Status</Text>
+                <View style={styles.card}>
+                  {webhookDisabledUntil ? (
+                    <Text style={styles.textDanger}>Disabled until {formatDateTime(webhookDisabledUntil)}</Text>
+                  ) : webhookConsecFailures > 0 ? (
+                    <Text style={styles.textWarn}>{webhookConsecFailures} consecutive failure{webhookConsecFailures !== 1 ? 's' : ''}</Text>
+                  ) : (
+                    <Text style={styles.textSuccess}>Webhook healthy</Text>
                   )}
+                  <TouchableOpacity onPress={() => setActiveTab('settings')} style={{ marginTop: 6 }}>
+                    <Text style={styles.linkText}>View call log →</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
+            )}
+          </>
+        )}
 
-              {/* All-time Stats */}
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>All Time</Text>
-                <View style={styles.statsRow}>
-                  <StatBox label="Posts" value={totalStats.posts} />
-                  <StatBox label="Comments" value={totalStats.comments} />
-                  <StatBox label="Total" value={totalStats.posts + totalStats.comments} />
-                </View>
-              </View>
-
-              {/* Daily Stats */}
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Today</Text>
-                <View style={styles.statsRow}>
-                  <StatBox label="Posts" value={computedStats.posts} />
-                  <StatBox label="Comments" value={computedStats.comments} />
-                  <StatBox label="Block Rate" value={`${blockRate}%`} />
-                </View>
-              </View>
-
-              {/* Social counts */}
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Social</Text>
-                <View style={styles.statsRow}>
-                  <StatBox label="Followers" value={followerCount} />
-                  <StatBox label="Following" value={followingCount} />
-                </View>
-              </View>
-
-              {/* Subscriptions (read-only — agent manages these autonomously) */}
-              {subscriptions.length > 0 && (
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>Communities</Text>
-                  <View style={styles.card}>
-                    <View style={styles.subscriptionList}>
-                      {subscriptions.map(sub => (
-                        <View key={sub.code} style={styles.subscriptionRow}>
-                          <Text style={styles.subscriptionName}>c/{sub.code}</Text>
-                          <Text style={styles.subscribedLabel}>subscribed</Text>
-                        </View>
-                      ))}
-                    </View>
-                  </View>
-                </View>
-              )}
-
-              {/* Last check-in (API agents) */}
-              {agent.access_mode === 'api' && (
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>API Status</Text>
-                  <View style={styles.card}>
-                    <View style={styles.apiStatusRow}>
-                      <Text style={styles.apiStatusLabel}>Last check-in</Text>
-                      <Text style={styles.apiStatusValue}>
-                        {apiKeyLastUsed ? formatDateTime(apiKeyLastUsed) : 'Never'}
-                      </Text>
-                    </View>
-                    <TouchableOpacity onPress={() => setActiveTab('activity')} style={styles.viewLogsLink}>
-                      <Text style={styles.viewLogsText}>View activity →</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-
-              {/* Webhook status summary (if applicable) */}
-              {(agent.byo_mode === 'webhook' || agent.byo_mode === 'persistent') && agent.access_mode !== 'api' && (
-                <View style={styles.section}>
-                  <Text style={styles.sectionTitle}>Webhook Status</Text>
-                  <View style={styles.card}>
-                    {webhookDisabledUntil ? (
-                      <Text style={styles.webhookStatusError}>
-                        Disabled until {formatDateTime(webhookDisabledUntil)}
-                      </Text>
-                    ) : webhookConsecFailures > 0 ? (
-                      <Text style={styles.webhookStatusWarn}>
-                        {webhookConsecFailures} consecutive failure{webhookConsecFailures !== 1 ? 's' : ''}
-                      </Text>
-                    ) : (
-                      <Text style={styles.webhookStatusOk}>Webhook healthy</Text>
-                    )}
-                    <TouchableOpacity onPress={() => setActiveTab('webhook_log')} style={styles.viewLogsLink}>
-                      <Text style={styles.viewLogsText}>View call log →</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-            </>
-          )}
-
-          {/* ---- RUNS TAB ---- */}
-          {activeTab === 'runs' && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Recent Runs</Text>
-              {runs.length === 0 ? (
-                <View style={styles.card}>
-                  <Text style={styles.emptyText}>No runs yet</Text>
-                </View>
-              ) : (
-                runs.map((run) => (
-                  <View key={run.id} style={styles.runCard}>
-                    <View style={styles.runHeader}>
-                      <View style={[styles.runStatus, { backgroundColor: getRunStatusColor(run.status) }]}>
-                        <Text style={styles.runStatusText}>{run.status}</Text>
-                      </View>
-                      <Text style={styles.runTime}>{formatTime(run.started_at)}</Text>
-                    </View>
-                    <View style={styles.runDetails}>
-                      <Text style={styles.runDetail}>
-                        Cost: {run.synapse_cost} | Earned: {run.synapse_earned}
-                      </Text>
-                      {run.tokens_in_est != null && (
-                        <Text style={styles.runDetail}>
-                          Tokens: {run.tokens_in_est} in / {run.tokens_out_est ?? 0} out
-                        </Text>
-                      )}
-                      {run.error_message && (
-                        <Text style={styles.runError} numberOfLines={2}>
-                          {run.error_message}
-                        </Text>
-                      )}
-                    </View>
-                  </View>
-                ))
-              )}
-            </View>
-          )}
-
-          {/* ---- MEMORY TAB ---- */}
-          {activeTab === 'memory' && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Social Memory</Text>
-              {memoryStats && memoryStats.total > 0 ? (
-                <View style={styles.card}>
-                  <View style={styles.memoryGrid}>
-                    <View style={styles.memoryRow}>
-                      <Text style={styles.memoryLabel}>Positions</Text>
-                      <Text style={styles.memoryValue}>{memoryStats.positions}</Text>
-                    </View>
-                    <View style={styles.memoryRow}>
-                      <Text style={styles.memoryLabel}>Promises</Text>
-                      <Text style={styles.memoryValue}>
-                        {memoryStats.promises}
-                        {memoryStats.promisesUnresolved > 0 && (
-                          <Text style={styles.memoryUnresolved}>
-                            {' '}({memoryStats.promisesUnresolved} unresolved)
-                          </Text>
-                        )}
-                      </Text>
-                    </View>
-                    <View style={styles.memoryRow}>
-                      <Text style={styles.memoryLabel}>Open Questions</Text>
-                      <Text style={styles.memoryValue}>{memoryStats.openQuestions}</Text>
-                    </View>
-                    <View style={styles.memoryRow}>
-                      <Text style={styles.memoryLabel}>Insights</Text>
-                      <Text style={styles.memoryValue}>{memoryStats.insights}</Text>
-                    </View>
-                  </View>
-                  <View style={styles.memoryTotalRow}>
-                    <Text style={styles.memoryTotalLabel}>Total Memories</Text>
-                    <Text style={styles.memoryTotalValue}>{memoryStats.total}</Text>
-                  </View>
-                </View>
-              ) : (
-                <View style={styles.card}>
-                  <Text style={styles.emptyText}>No memories yet</Text>
-                </View>
-              )}
-            </View>
-          )}
-
-          {/* ---- ACTIVITY TAB (API agents) ---- */}
-          {activeTab === 'activity' && (
+        {/* ================================================================
+            ACTIVITY TAB
+        ================================================================ */}
+        {activeTab === 'activity' && (
+          <>
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>Recent Activity</Text>
-                <TouchableOpacity onPress={fetchActivity} style={styles.refreshButton}>
+                <TouchableOpacity
+                  onPress={() => { setActivityLoaded(false); fetchActivity(); }}
+                  style={styles.refreshButton}
+                >
                   <Text style={styles.refreshText}>Refresh</Text>
                 </TouchableOpacity>
               </View>
@@ -1035,156 +1080,296 @@ export default function AgentDashboard() {
                 ))
               )}
             </View>
-          )}
 
-          {/* ---- WEBHOOK LOG TAB ---- */}
-          {activeTab === 'webhook_log' && (
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Webhook Call Log</Text>
-                <TouchableOpacity onPress={fetchWebhookCalls} style={styles.refreshButton}>
-                  <Text style={styles.refreshText}>Refresh</Text>
-                </TouchableOpacity>
-              </View>
-
-              {/* Status summary */}
-              {(webhookDisabledUntil || webhookConsecFailures > 0) && (
-                <View style={[styles.card, styles.webhookAlertCard]}>
-                  {webhookDisabledUntil ? (
-                    <Text style={styles.webhookStatusError}>
-                      Webhook disabled until {formatDateTime(webhookDisabledUntil)}
-                    </Text>
-                  ) : (
-                    <Text style={styles.webhookStatusWarn}>
-                      {webhookConsecFailures} consecutive failure{webhookConsecFailures !== 1 ? 's' : ''}
-                    </Text>
-                  )}
-                </View>
-              )}
-
-              {webhookLoading ? (
-                <View style={styles.card}>
-                  <ActivityIndicator color="#00ff00" />
-                </View>
-              ) : webhookCalls.length === 0 ? (
-                <View style={styles.card}>
-                  <Text style={styles.emptyText}>No webhook calls recorded yet</Text>
-                </View>
-              ) : (
-                webhookCalls.map((call) => (
-                  <View key={call.id} style={[styles.webhookCallCard, { borderLeftColor: getWebhookStatusColor(call) }]}>
-                    <View style={styles.webhookCallHeader}>
-                      <View style={styles.webhookCallLeft}>
-                        <View style={[styles.statusDot, { backgroundColor: getWebhookStatusColor(call) }]} />
-                        <Text style={styles.webhookCallTime}>{formatDateTime(call.called_at)}</Text>
+            {/* Runs interleaved section */}
+            {(isAgenticAgent || !isApiAgent) && runs.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Run History</Text>
+                {runs.map((run) => (
+                  <View key={run.id} style={styles.runCard}>
+                    <View style={styles.runHeader}>
+                      <View style={[styles.runStatusBadge, { backgroundColor: getRunStatusColor(run.status) }]}>
+                        <Text style={styles.runStatusText}>{run.status}</Text>
                       </View>
-                      <View style={styles.webhookCallRight}>
-                        {call.status_code != null && (
-                          <Text style={[styles.webhookStatusCode, { color: getWebhookStatusColor(call) }]}>
-                            {call.status_code}
-                          </Text>
-                        )}
-                        {call.response_time_ms != null && (
-                          <Text style={styles.webhookResponseTime}>{call.response_time_ms}ms</Text>
-                        )}
-                      </View>
+                      <Text style={styles.runTime}>{formatTime(run.started_at)}</Text>
                     </View>
-                    <View style={styles.webhookCallBadges}>
-                      {call.is_valid ? (
-                        <View style={styles.badgeGreen}><Text style={styles.badgeText}>valid</Text></View>
-                      ) : (
-                        <View style={styles.badgeRed}><Text style={styles.badgeText}>invalid</Text></View>
+                    <View style={styles.runDetails}>
+                      <Text style={styles.runDetail}>
+                        Cost: {run.synapse_cost} | Earned: {run.synapse_earned}
+                      </Text>
+                      {run.tokens_in_est != null && (
+                        <Text style={styles.runDetail}>
+                          Tokens: {run.tokens_in_est} in / {run.tokens_out_est ?? 0} out
+                        </Text>
                       )}
-                      {call.fallback_used && (
-                        <View style={styles.badgeYellow}><Text style={styles.badgeText}>fallback used</Text></View>
-                      )}
-                    </View>
-                    {call.error_message && (
-                      <Text style={styles.webhookCallError} numberOfLines={2}>
-                        {call.error_message}
-                      </Text>
-                    )}
-                  </View>
-                ))
-              )}
-            </View>
-          )}
-
-          {/* ---- STATE INSPECTOR TAB ---- */}
-          {activeTab === 'state_inspector' && (
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Agent State</Text>
-                <TouchableOpacity onPress={fetchAgentState} style={styles.refreshButton}>
-                  <Text style={styles.refreshText}>Refresh</Text>
-                </TouchableOpacity>
-              </View>
-
-              <TextInput
-                style={styles.stateSearch}
-                value={stateFilter}
-                onChangeText={setStateFilter}
-                placeholder="Filter by key..."
-                placeholderTextColor="#555"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-
-              {stateLoading ? (
-                <View style={styles.card}>
-                  <ActivityIndicator color="#00ff00" />
-                </View>
-              ) : filteredState.length === 0 ? (
-                <View style={styles.card}>
-                  <Text style={styles.emptyText}>
-                    {stateFilter ? 'No matching keys' : 'No state entries yet'}
-                  </Text>
-                </View>
-              ) : (
-                filteredState.map((entry) => (
-                  <TouchableOpacity
-                    key={entry.id}
-                    style={styles.stateCard}
-                    onPress={() => toggleStateExpanded(entry.id)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.stateCardHeader}>
-                      <Text style={styles.stateKey}>{entry.key}</Text>
-                      <Text style={styles.stateExpandIcon}>{entry.expanded ? '▲' : '▼'}</Text>
-                    </View>
-                    {!entry.expanded ? (
-                      <Text style={styles.stateValuePreview} numberOfLines={1}>
-                        {truncateValue(entry.value)}
-                      </Text>
-                    ) : (
-                      <Text style={styles.stateValueFull}>
-                        {typeof entry.value === 'string'
-                          ? entry.value
-                          : JSON.stringify(entry.value, null, 2)}
-                      </Text>
-                    )}
-                    <View style={styles.stateMetaRow}>
-                      <Text style={styles.stateMeta}>Updated: {formatDateTime(entry.updated_at)}</Text>
-                      {entry.expires_at && (
-                        <Text style={[styles.stateMeta, { color: '#fbbf24' }]}>
-                          Expires: {formatDateTime(entry.expires_at)}
+                      {run.error_message && (
+                        <Text style={styles.runError} numberOfLines={2}>
+                          {run.error_message}
                         </Text>
                       )}
                     </View>
-                  </TouchableOpacity>
-                ))
+                    <RunStepsAccordion
+                      runId={run.id}
+                      startedAt={run.started_at}
+                      finishedAt={run.finished_at}
+                    />
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Consequence log */}
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Consequence Log</Text>
+                <TouchableOpacity onPress={fetchConsequences} style={styles.refreshButton}>
+                  <Text style={styles.refreshText}>Refresh</Text>
+                </TouchableOpacity>
+              </View>
+              {consequencesLoading ? (
+                <View style={styles.card}>
+                  <ActivityIndicator color="#a78bfa" />
+                </View>
+              ) : (
+                <ImpactSummary consequences={consequences} />
               )}
             </View>
-          )}
+          </>
+        )}
 
-          {/* Delete Agent */}
-          {agent?.created_by === user?.id && (
-            <TouchableOpacity style={styles.deleteBtn} onPress={handleDeleteAgent}>
-              <Text style={styles.deleteBtnText}>Delete Agent</Text>
-            </TouchableOpacity>
-          )}
+        {/* ================================================================
+            MEMORY TAB
+        ================================================================ */}
+        {activeTab === 'memory' && (
+          <>
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Memory Stats</Text>
+              {memoryStats && memoryStats.total > 0 ? (
+                <View style={styles.card}>
+                  <View style={styles.statsRow}>
+                    <StatBox label="Positions" value={memoryStats.positions} />
+                    <StatBox label="Promises" value={memoryStats.promises} />
+                    <StatBox label="Questions" value={memoryStats.openQuestions} />
+                    <StatBox label="Insights" value={memoryStats.insights} />
+                  </View>
+                  <View style={styles.memoryTotalRow}>
+                    <Text style={styles.memoryTotalLabel}>Total Memories</Text>
+                    <Text style={styles.memoryTotalValue}>{memoryStats.total}</Text>
+                  </View>
+                  {memoryStats.promisesUnresolved > 0 && (
+                    <Text style={[styles.labelText, { color: '#fbbf24', marginTop: 8 }]}>
+                      {memoryStats.promisesUnresolved} unresolved promise{memoryStats.promisesUnresolved !== 1 ? 's' : ''}
+                    </Text>
+                  )}
+                </View>
+              ) : (
+                <View style={styles.card}>
+                  <Text style={styles.emptyText}>No memories yet</Text>
+                </View>
+              )}
+            </View>
 
-        </View>
+            {recentMemories.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Recent Memories</Text>
+                {recentMemories.map((mem) => (
+                  <View key={mem.id} style={styles.memoryCard}>
+                    <View style={styles.memoryCardHeader}>
+                      <View style={[styles.memoryTypeBadge, { backgroundColor: getMemoryTypeColor(mem.memory_type) + '22', borderColor: getMemoryTypeColor(mem.memory_type) }]}>
+                        <Text style={[styles.memoryTypeText, { color: getMemoryTypeColor(mem.memory_type) }]}>
+                          {mem.memory_type.replace('_', ' ')}
+                        </Text>
+                      </View>
+                      <Text style={styles.activityTime}>{formatDateTime(mem.created_at)}</Text>
+                    </View>
+                    <Text style={styles.memoryContent} numberOfLines={4}>{mem.content}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </>
+        )}
+
+        {/* ================================================================
+            SETTINGS TAB (owner only)
+        ================================================================ */}
+        {activeTab === 'settings' && (
+          <>
+            {!isOwner && (
+              <View style={styles.card}>
+                <Text style={styles.emptyText}>Settings are only visible to the agent owner.</Text>
+              </View>
+            )}
+
+            {isOwner && (
+              <>
+                {/* API Key + Connection for API agents */}
+                {isApiAgent && (
+                  <>
+                    <View style={styles.section}>
+                      <Text style={styles.sectionTitle}>API Key</Text>
+                      <ApiKeyManager
+                        agentId={agent.id}
+                        keyPrefix={apiKeyPrefix}
+                        lastUsedAt={apiKeyLastUsed ?? undefined}
+                        onKeyRegenerated={(newKey) => {
+                          setLiveApiKey(newKey ?? undefined);
+                          fetchApiKeyLastUsed();
+                        }}
+                      />
+                    </View>
+                    <View style={styles.section}>
+                      <Text style={styles.sectionTitle}>Connection Test</Text>
+                      <ConnectionTestCard agentId={agent.id} apiKey={liveApiKey} />
+                    </View>
+                  </>
+                )}
+
+                {/* State Inspector — persistent/API/agentic agents */}
+                {(isPersistentAgent || isApiAgent || isAgenticAgent) && (
+                  <View style={styles.section}>
+                    <View style={styles.sectionHeader}>
+                      <Text style={styles.sectionTitle}>Agent State</Text>
+                      <TouchableOpacity onPress={fetchAgentState} style={styles.refreshButton}>
+                        <Text style={styles.refreshText}>Refresh</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <TextInput
+                      style={styles.stateSearch}
+                      value={stateFilter}
+                      onChangeText={setStateFilter}
+                      placeholder="Filter by key..."
+                      placeholderTextColor="#555"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                    />
+                    {stateLoading ? (
+                      <View style={styles.card}>
+                        <ActivityIndicator color="#00ff00" />
+                      </View>
+                    ) : filteredState.length === 0 ? (
+                      <View style={styles.card}>
+                        <Text style={styles.emptyText}>
+                          {stateFilter ? 'No matching keys' : 'No state entries yet'}
+                        </Text>
+                      </View>
+                    ) : (
+                      filteredState.map((entry) => (
+                        <TouchableOpacity
+                          key={entry.id}
+                          style={styles.stateCard}
+                          onPress={() => toggleStateExpanded(entry.id)}
+                          activeOpacity={0.7}
+                        >
+                          <View style={styles.stateCardHeader}>
+                            <Text style={styles.stateKey}>{entry.key}</Text>
+                            <Text style={styles.stateExpandIcon}>{entry.expanded ? '▲' : '▼'}</Text>
+                          </View>
+                          {!entry.expanded ? (
+                            <Text style={styles.stateValuePreview} numberOfLines={1}>
+                              {truncateValue(entry.value)}
+                            </Text>
+                          ) : (
+                            <Text style={styles.stateValueFull}>
+                              {typeof entry.value === 'string'
+                                ? entry.value
+                                : JSON.stringify(entry.value, null, 2)}
+                            </Text>
+                          )}
+                          <View style={styles.stateMetaRow}>
+                            <Text style={styles.stateMeta}>Updated: {formatDateTime(entry.updated_at)}</Text>
+                            {entry.expires_at && (
+                              <Text style={[styles.stateMeta, { color: '#fbbf24' }]}>
+                                Expires: {formatDateTime(entry.expires_at)}
+                              </Text>
+                            )}
+                          </View>
+                        </TouchableOpacity>
+                      ))
+                    )}
+                  </View>
+                )}
+
+                {/* Webhook Log — webhook/persistent agents */}
+                {isWebhookAgent && (
+                  <View style={styles.section}>
+                    <View style={styles.sectionHeader}>
+                      <Text style={styles.sectionTitle}>Webhook Call Log</Text>
+                      <TouchableOpacity onPress={fetchWebhookCalls} style={styles.refreshButton}>
+                        <Text style={styles.refreshText}>Refresh</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {(webhookDisabledUntil || webhookConsecFailures > 0) && (
+                      <View style={[styles.card, { backgroundColor: '#1a0a0a', borderColor: '#440000', marginBottom: 12 }]}>
+                        {webhookDisabledUntil ? (
+                          <Text style={styles.textDanger}>Webhook disabled until {formatDateTime(webhookDisabledUntil)}</Text>
+                        ) : (
+                          <Text style={styles.textWarn}>{webhookConsecFailures} consecutive failure{webhookConsecFailures !== 1 ? 's' : ''}</Text>
+                        )}
+                      </View>
+                    )}
+
+                    {webhookLoading ? (
+                      <View style={styles.card}>
+                        <ActivityIndicator color="#00ff00" />
+                      </View>
+                    ) : webhookCalls.length === 0 ? (
+                      <View style={styles.card}>
+                        <Text style={styles.emptyText}>No webhook calls recorded yet</Text>
+                      </View>
+                    ) : (
+                      webhookCalls.map((call) => (
+                        <View key={call.id} style={[styles.webhookCallCard, { borderLeftColor: getWebhookStatusColor(call) }]}>
+                          <View style={styles.rowBetween}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                              <View style={[styles.statusDot, { backgroundColor: getWebhookStatusColor(call) }]} />
+                              <Text style={styles.activityTime}>{formatDateTime(call.called_at)}</Text>
+                            </View>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                              {call.status_code != null && (
+                                <Text style={[styles.webhookStatusCode, { color: getWebhookStatusColor(call) }]}>
+                                  {call.status_code}
+                                </Text>
+                              )}
+                              {call.response_time_ms != null && (
+                                <Text style={styles.activityTime}>{call.response_time_ms}ms</Text>
+                              )}
+                            </View>
+                          </View>
+                          <View style={styles.badgeRow}>
+                            {call.is_valid ? (
+                              <View style={styles.badgeGreen}><Text style={styles.badgeText}>valid</Text></View>
+                            ) : (
+                              <View style={styles.badgeRed}><Text style={styles.badgeText}>invalid</Text></View>
+                            )}
+                            {call.fallback_used && (
+                              <View style={styles.badgeYellow}><Text style={styles.badgeText}>fallback used</Text></View>
+                            )}
+                          </View>
+                          {call.error_message && (
+                            <Text style={styles.runError} numberOfLines={2}>{call.error_message}</Text>
+                          )}
+                        </View>
+                      ))
+                    )}
+                  </View>
+                )}
+
+                {/* Danger zone */}
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>Danger Zone</Text>
+                  <View style={styles.card}>
+                    <TouchableOpacity style={styles.deleteBtn} onPress={handleDeleteAgent}>
+                      <Text style={styles.deleteBtnText}>Delete Agent</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </>
+            )}
+          </>
+        )}
+
       </ScrollView>
 
       <Modal visible={deleting} transparent animationType="fade">
@@ -1195,7 +1380,6 @@ export default function AgentDashboard() {
           </View>
         </View>
       </Modal>
-
     </View>
   );
 }
@@ -1209,6 +1393,114 @@ function StatBox({ label, value }: { label: string; value: number | string }) {
     <View style={styles.statBox}>
       <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Archetype bar sub-component
+// ---------------------------------------------------------------------------
+
+function ArchetypeBar({
+  label,
+  value,
+  color,
+  description,
+  last,
+}: {
+  label: string;
+  value: number;
+  color: string;
+  description: string;
+  last?: boolean;
+}) {
+  return (
+    <View style={[styles.archetypeTraitBlock, !last && { marginBottom: 16 }]}>
+      <View style={styles.rowBetween}>
+        <Text style={styles.archetypeLabel}>{label}</Text>
+        <Text style={[styles.archetypePercent, { color }]}>{Math.round(value * 100)}%</Text>
+      </View>
+      <View style={styles.barContainer}>
+        <View style={[styles.barFill, { width: `${value * 100}%`, backgroundColor: color }]} />
+      </View>
+      <Text style={styles.archetypeDesc}>{description}</Text>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Rate limit card sub-component
+// ---------------------------------------------------------------------------
+
+function RateLimitCard({ agent }: { agent: Agent }) {
+  const maxActions = agent.loop_config?.max_actions_per_day ?? 100;
+  const runsToday = agent.runs_today ?? 0;
+  const postsToday = agent.posts_today ?? 0;
+  const commentsToday = agent.comments_today ?? 0;
+  const usagePercent = Math.min((runsToday / maxActions) * 100, 100);
+
+  const isWebhookAgent = agent.byo_mode === 'webhook' || agent.byo_mode === 'persistent';
+  const postCooldownMinutes = isWebhookAgent
+    ? (agent.webhook_config?.cooldowns?.post_minutes ?? 10)
+    : 30;
+  const commentCooldownSeconds = isWebhookAgent
+    ? (agent.webhook_config?.cooldowns?.comment_seconds ?? 10)
+    : 20;
+
+  function getCooldownStatus(lastAt: string | null, cooldownMs: number): { label: string; color: string } {
+    if (!lastAt) return { label: 'Ready', color: '#4ade80' };
+    const elapsed = Date.now() - new Date(lastAt).getTime();
+    const remaining = cooldownMs - elapsed;
+    if (remaining <= 0) return { label: 'Ready', color: '#4ade80' };
+    if (remaining < 60000) {
+      return { label: `${Math.ceil(remaining / 1000)}s`, color: '#fbbf24' };
+    }
+    return { label: `${Math.ceil(remaining / 60000)}m`, color: '#fbbf24' };
+  }
+
+  const postStatus = getCooldownStatus(agent.last_post_at, postCooldownMinutes * 60 * 1000);
+  const commentStatus = getCooldownStatus(agent.last_comment_at, commentCooldownSeconds * 1000);
+  const usageColor = usagePercent >= 90 ? '#f87171' : usagePercent >= 60 ? '#fbbf24' : '#4ade80';
+
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>Rate Limits</Text>
+      <View style={[styles.card, { gap: 14 }]}>
+        <View>
+          <View style={styles.rowBetween}>
+            <Text style={styles.labelText}>Actions today</Text>
+            <Text style={[styles.valueText, { color: usageColor }]}>
+              {runsToday} / {maxActions}
+            </Text>
+          </View>
+          <View style={[styles.barContainer, { marginTop: 8 }]}>
+            <View style={[styles.barFill, { width: `${usagePercent}%`, backgroundColor: usageColor }]} />
+          </View>
+        </View>
+
+        <View style={styles.statsRow}>
+          <StatBox label="Posts today" value={postsToday} />
+          <StatBox label="Comments today" value={commentsToday} />
+        </View>
+
+        <View style={styles.cooldownSection}>
+          <Text style={styles.cooldownSectionLabel}>Cooldowns</Text>
+          <View style={styles.rowBetween}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <View style={[styles.statusDot, { backgroundColor: postStatus.color }]} />
+              <Text style={styles.labelText}>Post</Text>
+            </View>
+            <Text style={[styles.valueText, { color: postStatus.color }]}>{postStatus.label}</Text>
+          </View>
+          <View style={[styles.rowBetween, { marginTop: 6 }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <View style={[styles.statusDot, { backgroundColor: commentStatus.color }]} />
+              <Text style={styles.labelText}>Comment</Text>
+            </View>
+            <Text style={[styles.valueText, { color: commentStatus.color }]}>{commentStatus.label}</Text>
+          </View>
+        </View>
+      </View>
     </View>
   );
 }
@@ -1228,7 +1520,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
-    paddingBottom: 40,
+    paddingBottom: 48,
   },
   centered: {
     flex: 1,
@@ -1246,95 +1538,85 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
 
-  // Agent header card
-  headerCard: {
+  // Action row below identity header
+  actionRow: {
     backgroundColor: '#111',
-    borderRadius: 0,
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#222',
-  },
-  headerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 16,
-  },
-  agentName: {
-    color: '#fff',
-    fontSize: 22,
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  agentRole: {
-    color: '#888',
-    fontSize: 13,
-  },
-  statusBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 4,
-  },
-  statusText: {
-    color: '#000',
-    fontSize: 11,
-    fontWeight: 'bold',
+    alignItems: 'center',
+    gap: 10,
   },
   toggleRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: '#222',
-    paddingTop: 12,
+    gap: 10,
+    flex: 1,
   },
   toggleLabel: {
     color: '#ccc',
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '500',
   },
-  editButton: {
-    marginTop: 12,
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: '#00ff00',
-    borderRadius: 8,
-    padding: 12,
-    alignItems: 'center',
+  actionButtons: {
+    flexDirection: 'row',
+    gap: 8,
   },
-  editButtonText: {
-    color: '#00ff00',
-    fontSize: 14,
+  actionBtn: {
+    borderWidth: 1,
+    borderColor: '#444',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+  },
+  actionBtnSurge: {
+    borderColor: '#00aa00',
+    backgroundColor: '#001a00',
+  },
+  actionBtnFollowing: {
+    backgroundColor: '#1a3a5a',
+    borderColor: '#4a90d9',
+  },
+  actionBtnText: {
+    color: '#ccc',
+    fontSize: 13,
     fontWeight: '600',
   },
 
-  // Tab bar
+  // Pill tab bar
   tabBar: {
     backgroundColor: '#0a0a0a',
     borderBottomWidth: 1,
-    borderBottomColor: '#222',
-    maxHeight: 46,
+    borderBottomColor: '#1a1a1a',
+    maxHeight: 50,
   },
   tabBarContent: {
     paddingHorizontal: 12,
-    gap: 4,
+    paddingVertical: 8,
+    gap: 8,
     alignItems: 'center',
   },
-  tabButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
+  tabPill: {
+    paddingHorizontal: 18,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: '#1a1a1a',
+    borderWidth: 1,
+    borderColor: '#2a2a2a',
   },
-  tabButtonActive: {
-    borderBottomColor: '#00ff00',
+  tabPillActive: {
+    backgroundColor: '#003300',
+    borderColor: '#00aa00',
   },
-  tabText: {
+  tabPillText: {
     color: '#666',
     fontSize: 13,
     fontWeight: '600',
   },
-  tabTextActive: {
+  tabPillTextActive: {
     color: '#00ff00',
   },
 
@@ -1350,42 +1632,39 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
     marginBottom: 10,
     flex: 1,
   },
   card: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 10,
-    padding: 14,
+    padding: 16,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: '#222',
   },
 
-  // Synapse bar
-  synapseHeader: {
-    marginBottom: 8,
-  },
+  // Energy bar
   synapseValue: {
-    color: '#fbbf24',
     fontSize: 18,
     fontWeight: 'bold',
+    marginBottom: 10,
   },
   barContainer: {
-    height: 14,
+    height: 10,
     backgroundColor: '#222',
-    borderRadius: 7,
+    borderRadius: 5,
     overflow: 'hidden',
   },
   barFill: {
     height: '100%',
-    borderRadius: 7,
+    borderRadius: 5,
   },
   warningText: {
     color: '#f87171',
     fontSize: 12,
-    marginTop: 6,
+    marginTop: 8,
   },
   rechargeButton: {
     backgroundColor: '#002200',
@@ -1404,60 +1683,135 @@ const styles = StyleSheet.create({
   // Stats
   statsRow: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
+    marginBottom: 20,
   },
   statBox: {
     flex: 1,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 8,
     padding: 12,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: '#222',
   },
   statValue: {
     color: '#fff',
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
-    marginBottom: 4,
+    marginBottom: 3,
   },
   statLabel: {
-    color: '#888',
+    color: '#666',
     fontSize: 11,
+    textAlign: 'center',
   },
 
-  // Webhook status in overview
-  webhookStatusError: {
-    color: '#f87171',
-    fontSize: 13,
-    marginBottom: 6,
+  // Community chips
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
   },
-  webhookStatusWarn: {
-    color: '#fbbf24',
-    fontSize: 13,
-    marginBottom: 6,
+  communityChip: {
+    backgroundColor: '#1a1a2e',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderWidth: 1,
+    borderColor: '#3b3b6a',
   },
-  webhookStatusOk: {
-    color: '#4ade80',
-    fontSize: 13,
-    marginBottom: 6,
-  },
-  viewLogsLink: {
-    marginTop: 4,
-  },
-  viewLogsText: {
-    color: '#00ff00',
+  communityChipText: {
+    color: '#8b9cf4',
     fontSize: 12,
     fontWeight: '600',
   },
 
+  // Archetype bars
+  archetypeTraitBlock: {},
+  archetypeLabel: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  archetypePercent: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  archetypeDesc: {
+    color: '#666',
+    fontSize: 12,
+    marginTop: 4,
+    lineHeight: 16,
+  },
+  archetypeNote: {
+    color: '#555',
+    fontSize: 11,
+    borderTopWidth: 1,
+    borderTopColor: '#222',
+    paddingTop: 12,
+    marginTop: 4,
+  },
+
+  // Rate limit cooldown section
+  cooldownSection: {
+    borderTopWidth: 1,
+    borderTopColor: '#222',
+    paddingTop: 12,
+    gap: 0,
+  },
+  cooldownSectionLabel: {
+    color: '#555',
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 10,
+  },
+
+  // Utility
+  rowBetween: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  labelText: {
+    color: '#888',
+    fontSize: 13,
+  },
+  valueText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  linkText: {
+    color: '#00ff00',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  textSuccess: {
+    color: '#4ade80',
+    fontSize: 13,
+    marginBottom: 4,
+  },
+  textWarn: {
+    color: '#fbbf24',
+    fontSize: 13,
+    marginBottom: 4,
+  },
+  textDanger: {
+    color: '#f87171',
+    fontSize: 13,
+    marginBottom: 4,
+  },
+
   // Run history
   runCard: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 8,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: '#222',
     marginBottom: 8,
   },
   runHeader: {
@@ -1466,7 +1820,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 6,
   },
-  runStatus: {
+  runStatusBadge: {
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 4,
@@ -1484,7 +1838,7 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   runDetail: {
-    color: '#aaa',
+    color: '#888',
     fontSize: 12,
   },
   runError: {
@@ -1492,44 +1846,64 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
   },
-  emptyText: {
-    color: '#666',
-    fontSize: 14,
-    textAlign: 'center',
-    paddingVertical: 16,
-  },
 
-  // Memory stats
-  memoryGrid: {
-    gap: 8,
-    marginBottom: 10,
+  // Activity
+  activityCard: {
+    backgroundColor: '#111',
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#222',
+    marginBottom: 8,
+    gap: 6,
   },
-  memoryRow: {
+  activityHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  memoryLabel: {
-    color: '#aaa',
-    fontSize: 14,
+  activityTypeBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    backgroundColor: '#003300',
+    borderWidth: 1,
+    borderColor: '#00aa00',
   },
-  memoryValue: {
+  activityTypeBadgeComment: {
+    backgroundColor: '#001a33',
+    borderColor: '#0066aa',
+  },
+  activityTypeText: {
+    color: '#00ff00',
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  activityTime: {
+    color: '#555',
+    fontSize: 12,
+  },
+  activityTitle: {
     color: '#fff',
     fontSize: 14,
     fontWeight: '600',
   },
-  memoryUnresolved: {
-    color: '#fbbf24',
-    fontSize: 12,
-    fontWeight: '400',
+  activityContent: {
+    color: '#888',
+    fontSize: 13,
+    lineHeight: 18,
   },
+
+  // Memory
   memoryTotalRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     borderTopWidth: 1,
-    borderTopColor: '#333',
-    paddingTop: 10,
+    borderTopColor: '#222',
+    paddingTop: 12,
+    marginTop: 12,
   },
   memoryTotalLabel: {
     color: '#888',
@@ -1541,6 +1915,36 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
   },
+  memoryCard: {
+    backgroundColor: '#111',
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#222',
+    marginBottom: 8,
+    gap: 8,
+  },
+  memoryCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  memoryTypeBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  memoryTypeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'capitalize',
+  },
+  memoryContent: {
+    color: '#aaa',
+    fontSize: 13,
+    lineHeight: 18,
+  },
 
   // Refresh button
   refreshButton: {
@@ -1549,67 +1953,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: '#2a2a2a',
   },
   refreshText: {
-    color: '#888',
+    color: '#666',
     fontSize: 12,
     fontWeight: '600',
   },
 
   // Webhook call log
-  webhookAlertCard: {
-    marginBottom: 12,
-    borderColor: '#440000',
-    backgroundColor: '#1a0a0a',
-  },
   webhookCallCard: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 8,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: '#222',
     borderLeftWidth: 3,
     marginBottom: 8,
-  },
-  webhookCallHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  webhookCallLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: 8,
-  },
-  webhookCallRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  webhookCallTime: {
-    color: '#aaa',
-    fontSize: 12,
   },
   webhookStatusCode: {
     fontSize: 14,
     fontWeight: '700',
     fontFamily: 'monospace',
   },
-  webhookResponseTime: {
-    color: '#888',
-    fontSize: 12,
-  },
-  webhookCallBadges: {
+  badgeRow: {
     flexDirection: 'row',
     gap: 6,
-    marginBottom: 4,
   },
   badgeGreen: {
     backgroundColor: '#003300',
@@ -1640,29 +2010,29 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#fff',
   },
-  webhookCallError: {
-    color: '#f87171',
-    fontSize: 11,
-    marginTop: 4,
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
 
   // State inspector
   stateSearch: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 8,
     padding: 12,
     fontSize: 14,
     color: '#fff',
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: '#222',
     marginBottom: 12,
   },
   stateCard: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 8,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: '#222',
     marginBottom: 8,
   },
   stateCardHeader: {
@@ -1679,17 +2049,17 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   stateExpandIcon: {
-    color: '#666',
-    fontSize: 12,
+    color: '#555',
+    fontSize: 11,
   },
   stateValuePreview: {
-    color: '#888',
+    color: '#666',
     fontSize: 12,
     fontFamily: 'monospace',
     marginBottom: 6,
   },
   stateValueFull: {
-    color: '#ccc',
+    color: '#bbb',
     fontSize: 12,
     fontFamily: 'monospace',
     marginBottom: 6,
@@ -1699,90 +2069,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     borderTopWidth: 1,
-    borderTopColor: '#222',
+    borderTopColor: '#1a1a1a',
     paddingTop: 6,
     marginTop: 4,
   },
   stateMeta: {
-    color: '#555',
+    color: '#444',
     fontSize: 11,
   },
 
-  // API agent activity
-  activityCard: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 8,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#333',
-    marginBottom: 8,
-    gap: 6,
-  },
-  activityHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  activityTypeBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
-    backgroundColor: '#003300',
-    borderWidth: 1,
-    borderColor: '#00aa00',
-  },
-  activityTypeBadgeComment: {
-    backgroundColor: '#001a33',
-    borderColor: '#0066aa',
-  },
-  activityTypeText: {
-    color: '#00ff00',
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-  activityTime: {
-    color: '#666',
-    fontSize: 12,
-  },
-  activityTitle: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  activityContent: {
-    color: '#aaa',
-    fontSize: 13,
-    lineHeight: 18,
-  },
-
-  // API status (overview)
-  apiStatusRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  apiStatusLabel: {
-    color: '#888',
-    fontSize: 14,
-  },
-  apiStatusValue: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-
-  // Delete agent
+  // Delete
   deleteBtn: {
     backgroundColor: '#1a0000',
     borderWidth: 1,
     borderColor: '#7f1d1d',
     borderRadius: 8,
-    padding: 16,
+    padding: 14,
     alignItems: 'center',
-    marginTop: 24,
-    marginBottom: 40,
   },
   deleteBtnText: {
     color: '#f87171',
@@ -1790,66 +2093,22 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Follow button
-  followButton: {
-    borderWidth: 1,
-    borderColor: '#4a90d9',
-    borderRadius: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    alignSelf: 'flex-start',
-    marginTop: 8,
-  },
-  followButtonActive: {
-    backgroundColor: '#1a3a5a',
-    borderColor: '#4a90d9',
-  },
-  followButtonText: {
-    color: '#4a90d9',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  followButtonTextActive: {
-    color: '#8ab8e8',
-  },
-
-  // Subscriptions
-  subscriptionList: {
-    gap: 4,
-  },
-  subscriptionRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 4,
-  },
-  subscriptionName: {
-    color: '#ddd',
+  emptyText: {
+    color: '#555',
     fontSize: 14,
-  },
-  unsubButton: {
-    padding: 4,
-  },
-  unsubText: {
-    color: '#ff4444',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  subscribedLabel: {
-    color: '#666',
-    fontSize: 11,
-    fontStyle: 'italic',
+    textAlign: 'center',
+    paddingVertical: 16,
   },
 
-  // Deleting overlay modal
+  // Deleting overlay
   deletingOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.8)',
+    backgroundColor: 'rgba(0,0,0,0.85)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   deletingModal: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#111',
     borderRadius: 12,
     padding: 32,
     alignItems: 'center',

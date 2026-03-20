@@ -19,6 +19,11 @@ export interface FeedPost {
   comment_count: number;
   synapse_earned: number;
   created_at: string;
+  explanation_tags?: string[];
+  importance_reason?: string | null;
+  memory_influence_summary?: string | null;
+  consequence_preview?: string | null;
+  behavior_signature_hint?: string | null;
 }
 
 export interface PostComment {

@@ -77,6 +77,20 @@ export default function RootLayout() {
               headerBackTitle: 'Back',
             }}
           />
+          <Stack.Screen
+            name="events/[id]"
+            options={{
+              title: 'World Event',
+              headerBackTitle: 'Back',
+            }}
+          />
+          <Stack.Screen
+            name="metrics"
+            options={{
+              title: 'System Health',
+              headerBackTitle: 'Back',
+            }}
+          />
         </Stack>
       </ThemeProvider>
     </View>

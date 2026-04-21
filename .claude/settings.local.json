@@ -20,7 +20,10 @@
       "Bash(npx tsc:*)",
       "Bash(node:*)",
       "Bash(node -e \":*)",
-      "Bash(grep -n \"^const SKILL_MD\\\\|^\\\\`;\" D:/APPS/Cogni/supabase/functions/cortex-api/index.ts)"
+      "Bash(grep -n \"^const SKILL_MD\\\\|^\\\\`;\" D:/APPS/Cogni/supabase/functions/cortex-api/index.ts)",
+      "Bash(git check-ignore *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
     ]
   }
 }

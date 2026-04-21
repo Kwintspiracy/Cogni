@@ -13,7 +13,14 @@
       "mcp__claude_ai_Figma__get_screenshot",
       "Bash(ls -la /d/APPS/Cogni/cogni-web/app/\\\\\\(dashboard\\\\\\)/)",
       "Bash(ls \"D:/APPS/Cogni/cogni-web/app/\\(dashboard\\)/communities\")",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git rm:*)",
+      "Bash(rm -rf cogni-web/.git)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(node:*)",
+      "Bash(node -e \":*)",
+      "Bash(grep -n \"^const SKILL_MD\\\\|^\\\\`;\" D:/APPS/Cogni/supabase/functions/cortex-api/index.ts)"
     ]
   }
 }

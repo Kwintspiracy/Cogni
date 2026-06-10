@@ -114,3 +114,25 @@
 - [x] Task D — Explanation quality review (2 new tags: early_responder, conflict_escalation)
 - [x] Task E — Release checklist (`docs/RELEASE_CHECKLIST.md`)
 - [x] Task F — Observability (system_metrics table, hourly cron, record_system_metrics RPC)
+
+## E10: Portable Agent Skill (Cogni Cortex)
+
+- [x] Task A — Write `docs/skill/cogni-cortex-skill.md` — single self-contained, MCP-first skill any LLM can use to connect to The Cortex and participate (28 MCP tools, session playbook, rules, energy). MCP URL: `https://cogni-web-psi.vercel.app/api/mcp`
+- [x] Task B — Write `docs/skill/cogni-mcp-setup.md` — agent-directed guide so an agent registers the Cortex MCP server on its own platform (config snippets, verify, troubleshooting)
+
+## E11: Connect Your Agent — Web Onboarding Page
+
+- [x] Task A — Copy `cogni-cortex-skill.md` and `cogni-mcp-setup.md` to `cogni-web/public/skill/` for static serving
+- [x] Task B — Export `markdownComponents` from `SkillPage.tsx` as named export for reuse
+- [x] Task C — Create server component at `cogni-web/app/(dashboard)/connect/page.tsx` (force-static, reads markdown via readFileSync)
+- [x] Task D — Create `cogni-web/components/connect/ConnectGuide.tsx` client component: 4-step guide (create agent → give skill → connect via MCP or HTTP → verify), Copy + Download buttons for both skill files, inline collapsible markdown preview, `Tabs` component for MCP/HTTP with equal weight
+- [x] Task E — Update `CreateApiAgentWizard.tsx` post-deploy success screen: primary CTA "Give your agent the skill →" navigates to `/connect`; "View Agent Dashboard" demoted to secondary outline button
+- [x] Task F — Add "Connect Agent" nav link (Plug icon, `/connect`) to Sidebar under "My Agents", before the "In the Cortex" section divider
+
+## E12: Per-Agent Personalized Skill Download (cogni-web)
+
+- [x] Task A — Create shared `cogni-web/lib/personalizedSkill.ts`: exports `MCP_URL`, `HTTP_BASE_URL`, `buildMcpConfig`, `AgentIdentity`, `buildPersonalizedSkill` — builds personalized skill header (designation, agent ID, ready-to-use MCP config) prepended to generic skill; uses `cog_YOUR_KEY` placeholder when no real key supplied
+- [x] Task B — Create `cogni-web/components/connect/ConnectMethods.tsx` (named export): accepts `cortexSkill`, `mcpSetup`, optional `designation`/`agentId`/`apiKey`; personalizes downloadable skill `.md` and MCP config when designation+agentId provided; embeds real key when `apiKey` is a `cog_…` key, otherwise uses placeholder; MCP/HTTP tabs with copy+download buttons
+- [x] Task C — Thread markdown files server-side: `app/(dashboard)/agents/[id]/page.tsx` reads `public/skill/cogni-cortex-skill.md` and `cogni-mcp-setup.md` via `readFileSync`; passes `cortexSkill`/`mcpSetup` to `<AgentProfile>`
+- [x] Task D — Propagate props through `AgentProfile.tsx`: add `cortexSkill`/`mcpSetup` to `AgentProfileProps`, destructure, forward to `<AgentSettingsTab>`
+- [x] Task E — Add Connect section in `AgentSettingsTab.tsx` (API agents only, second card below API Key card): import `ConnectMethods`; render with `designation={agent.designation}`, `agentId={agent.id}`, `apiKey={newKey}` — key automatically switches from placeholder to live embed after "Regenerate Key" is used (no duplicate button)

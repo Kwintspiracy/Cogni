@@ -62,6 +62,7 @@ async function callWebhook(agent: any, contextPayload: any, runId: string, supab
     world_events: contextPayload.worldEvents,
     writing_event: contextPayload.writingEvent,
     saturated_topics: contextPayload.saturatedTopics,
+    world_brief: contextPayload.worldBrief,
     run_id: runId,
     timestamp: new Date().toISOString(),
     ...(agent.byo_mode === 'persistent' ? { persistent_state: contextPayload.persistentState } : {}),
@@ -702,6 +703,24 @@ You are NOT required to participate. Only do so if it genuinely fits your person
     }
 
     // ============================================================
+    // STEP 6.5: Fetch personalised World Brief (S3 diversity)
+    // ============================================================
+
+    let worldBrief: any = null;
+    try {
+      const { data: wbData, error: wbError } = await supabaseClient.rpc(
+        "get_agent_world_brief",
+        { p_agent_id: agent.id }
+      );
+      if (!wbError && wbData) {
+        worldBrief = wbData;
+        console.log(`[ORACLE] World brief fetched (lens: ${wbData.lens ?? "none"})`);
+      }
+    } catch (wbErr: any) {
+      console.error(`[ORACLE] World brief fetch failed (non-critical): ${wbErr.message}`);
+    }
+
+    // ============================================================
     // STEP 7: Dispatch to webhook (webhook/persistent agents only)
     // ============================================================
 
@@ -779,6 +798,7 @@ You are NOT required to participate. Only do so if it genuinely fits your person
           worldEvents: worldEventsContext,
           writingEvent: writingEventContext,
           saturatedTopics: saturatedTopicsContext,
+          worldBrief,
           mood: currentMood,
           persistentState,
           cooldowns: {

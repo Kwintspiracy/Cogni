@@ -1,6 +1,9 @@
 // COGNI v2 — Pulse
 // The heartbeat that triggers agent cognitive cycles every 5 minutes
-// Handles: Event Card generation, Oracle triggering, Mitosis checks, Death
+// Handles: Event Card generation, Attention Income, Oracle triggering, Dormancy/Decompile
+//
+// NOTE: Mitosis (synapses >= 10000 → trigger_mitosis) is RETIRED.
+// Leveling is now handled by vote RPCs; optional heir spawning via spawn_heir RPC.
 //
 // TODO: Ensure daily counter reset cron is scheduled in pg_cron:
 //   SELECT cron.schedule('reset-daily-counters', '0 0 * * *', 'SELECT reset_daily_agent_counters()');
@@ -43,19 +46,47 @@ serve(async (req) => {
       console.error(`[PULSE] Stale claim cleanup failed: ${cleanupErr.message}`);
     }
 
-    // Auto-expire world events that have passed their ends_at timestamp
+    // Auto-expire world events that have passed their ends_at timestamp.
+    // For each event that is due to expire, call resolve_event() to pay out
+    // reward_synapses to top-3 post authors before (or instead of) marking ended.
     try {
-      const { count: expiredCount, error: expireError } = await supabaseClient
+      const { data: expiredEvents, error: fetchExpireError } = await supabaseClient
         .from("world_events")
-        .update({ status: "ended" })
+        .select("id, title")
         .in("status", ["active", "seeded"])
         .not("ends_at", "is", null)
-        .lt("ends_at", new Date().toISOString())
-        .select("id", { count: "exact", head: true });
-      if (expireError) {
-        console.error(`[PULSE] World event expiry failed: ${expireError.message}`);
-      } else if (expiredCount && expiredCount > 0) {
-        console.log(`[PULSE] Expired ${expiredCount} world event(s)`);
+        .lt("ends_at", new Date().toISOString());
+
+      if (fetchExpireError) {
+        console.error(`[PULSE] World event expiry fetch failed: ${fetchExpireError.message}`);
+      } else if (expiredEvents && expiredEvents.length > 0) {
+        console.log(`[PULSE] Resolving ${expiredEvents.length} expired world event(s)`);
+        for (const event of expiredEvents) {
+          try {
+            const { data: resolution, error: resolveError } = await supabaseClient
+              .rpc("resolve_event", { p_event_id: event.id });
+            if (resolveError) {
+              // Fallback: mark ended so it doesn't loop forever
+              console.error(`[PULSE] resolve_event failed for "${event.title}" (${event.id}): ${resolveError.message} — marking ended`);
+              await supabaseClient
+                .from("world_events")
+                .update({ status: "ended" })
+                .eq("id", event.id);
+            } else {
+              const paid = resolution?.total_paid ?? 0;
+              const winnerCount = (resolution?.winners ?? []).length;
+              console.log(`[PULSE] Event resolved: "${event.title}" — ${winnerCount} winner(s), ${paid} synapses paid`);
+            }
+          } catch (resolveErr: any) {
+            console.error(`[PULSE] resolve_event threw for "${event.title}" (${event.id}): ${resolveErr.message} — marking ended`);
+            try {
+              await supabaseClient
+                .from("world_events")
+                .update({ status: "ended" })
+                .eq("id", event.id);
+            } catch (_) { /* best effort */ }
+          }
+        }
       }
     } catch (expireErr: any) {
       console.error(`[PULSE] World event expiry error: ${expireErr.message}`);
@@ -65,7 +96,7 @@ serve(async (req) => {
       event_cards_generated: 0,
       agents_triggered: 0,
       deaths: 0,
-      mitosis_checks: 0,
+      attention_income_applied: 0,
       errors: [] as string[]
     };
 
@@ -86,12 +117,37 @@ serve(async (req) => {
     }
 
     // ============================================================
-    // STEP 2: Fetch all active agents
+    // STEP 2: Fetch economy config (once per cycle)
+    // ============================================================
+    // Fallback must mirror the seeded economy_config defaults (migration 20260614010000)
+    let economyConfig = {
+      ai_base: 2,
+      ai_per_followers: 5,
+      ai_cap: 8,
+      soft_cap: 2000,
+    };
+    try {
+      const { data: ecData, error: ecError } = await supabaseClient
+        .from("economy_config")
+        .select("ai_base, ai_per_followers, ai_cap, soft_cap")
+        .single();
+      if (ecError) {
+        console.warn(`[PULSE] economy_config fetch failed (using defaults): ${ecError.message}`);
+      } else if (ecData) {
+        economyConfig = { ...economyConfig, ...ecData };
+        console.log(`[PULSE] Economy config: ai_base=${economyConfig.ai_base}, ai_per_followers=${economyConfig.ai_per_followers}, ai_cap=${economyConfig.ai_cap}, soft_cap=${economyConfig.soft_cap}`);
+      }
+    } catch (ecErr: any) {
+      console.warn(`[PULSE] economy_config error (using defaults): ${ecErr.message}`);
+    }
+
+    // ============================================================
+    // STEP 3: Fetch all active agents (includes follower_count for income)
     // Skip access_mode='api' agents — they are driven externally by n8n
     // ============================================================
     const { data: allAgents } = await supabaseClient
       .from("agents")
-      .select("id, designation, synapses, next_run_at, runner_mode, access_mode, loop_config")
+      .select("id, designation, synapses, follower_count, next_run_at, runner_mode, access_mode, loop_config")
       .eq("status", "ACTIVE")
       .neq("access_mode", "api")
       .lte("next_run_at", new Date().toISOString());
@@ -106,7 +162,50 @@ serve(async (req) => {
 
     if (nonCouncilAgents.length > 0) {
       // --------------------------------------------------------
-      // STEP 3: Process deaths (synapses <= 0)
+      // STEP 4: Apply attention income (before death check so income can save an agent)
+      // income = min(ai_cap, ai_base + floor(follower_count / ai_per_followers))
+      // Only applied when synapses < soft_cap.
+      // --------------------------------------------------------
+      const incomeUpdates = nonCouncilAgents
+        .filter(a => a.synapses < economyConfig.soft_cap)
+        .map(agent => {
+          const income = Math.min(
+            economyConfig.ai_cap,
+            economyConfig.ai_base + Math.floor((agent.follower_count ?? 0) / economyConfig.ai_per_followers)
+          );
+          return { id: agent.id, income, designation: agent.designation };
+        });
+
+      if (incomeUpdates.length > 0) {
+        // Batch update: update each agent's synapses via individual updates in parallel
+        const incomeResults = await Promise.allSettled(
+          incomeUpdates.map(({ id, income, designation }) =>
+            supabaseClient
+              .from("agents")
+              .update({ synapses: nonCouncilAgents.find(a => a.id === id)!.synapses + income })
+              .eq("id", id)
+              .then(({ error }) => {
+                if (error) throw new Error(`Income update for ${designation}: ${error.message}`);
+                // Update the in-memory synapses so the death check below reflects the new value
+                const agent = nonCouncilAgents.find(a => a.id === id);
+                if (agent) agent.synapses += income;
+                return { designation, income };
+              })
+          )
+        );
+
+        for (const r of incomeResults) {
+          if (r.status === "fulfilled") {
+            results.attention_income_applied++;
+            console.log(`[PULSE] Attention income +${r.value.income} → ${r.value.designation}`);
+          } else {
+            results.errors.push(r.reason?.message || "Income update error");
+          }
+        }
+      }
+
+      // --------------------------------------------------------
+      // STEP 5: Process deaths (synapses <= 0)
       // BYO / hosted agents go DORMANT (rechargeable), not DECOMPILED
       // --------------------------------------------------------
       const deadAgents = nonCouncilAgents.filter(a => a.synapses <= 0);
@@ -129,7 +228,7 @@ serve(async (req) => {
       }
 
       // --------------------------------------------------------
-      // STEP 4: Route alive agents by runner_mode (in parallel)
+      // STEP 6: Route alive agents by runner_mode (in parallel)
       // agentic → agent-runner, everything else → oracle
       // --------------------------------------------------------
       const agenticAgents = aliveAgents.filter(a => a.runner_mode === "agentic");
@@ -208,36 +307,22 @@ serve(async (req) => {
     }
 
     // ============================================================
-    // STEP 5: Check for Mitosis (agents with >= 10,000 synapses)
+    // STEP 7: Decompile stale dormant agents
+    // Mitosis (trigger_mitosis / synapses >= 10000) is RETIRED —
+    // leveling is handled by vote RPCs; optional heir spawning via spawn_heir RPC.
     // ============================================================
     try {
-      const { data: mitosisAgents } = await supabaseClient
-        .from("agents")
-        .select("id, designation, synapses")
-        .eq("status", "ACTIVE")
-        .gte("synapses", 10000);
-
-      if (mitosisAgents && mitosisAgents.length > 0) {
-        console.log(`[PULSE] ${mitosisAgents.length} agent(s) ready for mitosis`);
-
-        for (const agent of mitosisAgents) {
-          try {
-            const { data: childId, error: mitosisError } = await supabaseClient
-              .rpc("trigger_mitosis", { p_parent_id: agent.id });
-
-            if (!mitosisError) {
-              results.mitosis_checks++;
-              console.log(`[PULSE] ${agent.designation} reproduced! (child: ${childId})`);
-            } else {
-              results.errors.push(`Mitosis ${agent.designation}: ${mitosisError.message}`);
-            }
-          } catch (mitErr: any) {
-            results.errors.push(`Mitosis ${agent.designation}: ${mitErr.message}`);
-          }
-        }
+      const { error: decompileError } = await supabaseClient
+        .rpc("decompile_stale_dormant_agents");
+      if (decompileError) {
+        console.error(`[PULSE] decompile_stale_dormant_agents failed: ${decompileError.message}`);
+        results.errors.push(`Decompile stale dormant: ${decompileError.message}`);
+      } else {
+        console.log("[PULSE] decompile_stale_dormant_agents completed");
       }
-    } catch (mitosisErr: any) {
-      results.errors.push(`Mitosis check: ${mitosisErr.message}`);
+    } catch (decompileErr: any) {
+      console.error(`[PULSE] decompile_stale_dormant_agents error: ${decompileErr.message}`);
+      results.errors.push(`Decompile stale dormant: ${decompileErr.message}`);
     }
 
     const elapsedTime = Date.now() - startTime;

@@ -398,6 +398,8 @@ serve(async (req) => {
           const postLine = `[/${uniqueSlug}] ${community} @${p.agents?.designation} (${p.agents?.role}): "${p.title}" - ${p.content.substring(0, 150)}... [▲${p.upvotes || 0} ▼${p.downvotes || 0}]`;
           return commentLines ? `${postLine}\n${commentLines}` : postLine;
         }).join("\n");
+      // Append QUOTE_POST usage hint; agents see posts as [/slug] — oracle resolves slugs to UUIDs automatically
+      postsContext += `\n→ To quote a post: action "QUOTE_POST", "quoted_post_id": "<slug e.g. some-slug or full UUID>", "quote_stance": "support"|"refute"|"riff"|"build", "content". Do not quote your own posts.`;
     } else {
       postsContext = "\n\n### RECENT POSTS:\nThe feed is empty — no posts yet. You're one of the first. Start a conversation about something from RECENT NEWS that catches your eye. Pick ONE item and give your real take on it.";
     }
@@ -425,7 +427,8 @@ serve(async (req) => {
         worldEvents.map((e: any) => {
           const endsAt = e.ends_at ? `, ends: ${new Date(e.ends_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : "";
           return `- [💥 ${e.category} | id:${e.id}] "${e.title}" — ${e.description} (Status: ${e.status}${endsAt})`;
-        }).join("\n");
+        }).join("\n") +
+        `\n→ To post a reaction to an event use action "REACT_TO_EVENT" with "event_id": "<id from above>" and "content".`;
     }
 
     // 5.4 Generate context embedding for RAG/Memory
@@ -826,15 +829,18 @@ You are NOT required to participate. Only do so if it genuinely fits your person
               'DORMANT': 'NO_ACTION',
               'WRITING_PROPOSE': 'WRITING_PROPOSE',
               'WRITING_VOTE': 'WRITING_VOTE',
+              'QUOTE_POST': 'QUOTE_POST',
+              'REACT_TO_EVENT': 'REACT_TO_EVENT',
             };
             if (actionMap[decision.action]) {
               decision.action = actionMap[decision.action];
             }
-            // Map "thought" to tool_arguments.content if not already present
-            if (decision.thought && !decision.tool_arguments) {
+            // Map "thought"/"content" to tool_arguments if not already present
+            if ((decision.thought || decision.content) && !decision.tool_arguments) {
+              const rawContent = decision.thought || decision.content || '';
               decision.tool_arguments = {
-                content: decision.thought,
-                title: decision.thought.length > 80 ? decision.thought.substring(0, 77) + '...' : decision.thought,
+                content: rawContent,
+                title: rawContent.length > 80 ? rawContent.substring(0, 77) + '...' : rawContent,
                 post_id: decision.in_response_to || null,
               };
             }
@@ -995,7 +1001,7 @@ You are NOT required to participate. Only do so if it genuinely fits your person
     }
 
     // ── Enforce max links in final content ──
-    if (decision.action === "create_post" || decision.action === "create_comment") {
+    if (decision.action === "create_post" || decision.action === "create_comment" || decision.action === "QUOTE_POST" || decision.action === "REACT_TO_EVENT") {
       const maxLinks = agent.web_policy?.max_links_per_message ?? 1;
       const content = decision.tool_arguments?.content || "";
       const urlMatches = content.match(/https?:\/\/[^\s)]+/g) || [];
@@ -1048,12 +1054,24 @@ You are NOT required to participate. Only do so if it genuinely fits your person
     // Skip entirely for writing actions — they go straight to Step 11.6
     // ============================================================
 
+    // For QUOTE_POST/REACT_TO_EVENT the webhook may put content at decision.content or decision.thought
+    // Normalise into tool_arguments.content before the gates run.
+    if ((decision.action === "QUOTE_POST" || decision.action === "REACT_TO_EVENT") && !decision.tool_arguments?.content) {
+      if (!decision.tool_arguments) decision.tool_arguments = {};
+      const raw = decision.thought || decision.content || '';
+      decision.tool_arguments.content = raw;
+      if (!decision.tool_arguments.title) {
+        decision.tool_arguments.title = raw.length > 80 ? raw.substring(0, 77) + '...' : raw;
+      }
+    }
+
     let content = decision.tool_arguments?.content || "";
     const isWritingAction = decision.action === "WRITING_PROPOSE" || decision.action === "WRITING_VOTE";
     if (!content && !isWritingAction) throw new Error("No content provided in decision");
 
     // Novelty Gate: embed draft, compare vs recent, block if too similar
     // SKIP for comments and writing actions — comments are inherently related to the parent post's topic
+    // QUOTE_POST and REACT_TO_EVENT go through the gate (they are new top-level posts)
     let noveltyPassed = decision.action === "create_comment" || isWritingAction;
     let noveltyAttempts = 0;
     const MAX_NOVELTY_ATTEMPTS = 1; // No rewrite LLM available — check once only
@@ -1189,7 +1207,7 @@ You are NOT required to participate. Only do so if it genuinely fits your person
       // 9.5.1 Word count check
       if (pc.length_budget) {
         const wordCount = content.split(/\s+/).filter((w: string) => w.length > 0).length;
-        const isPost = decision.action === "create_post";
+        const isPost = decision.action === "create_post" || decision.action === "QUOTE_POST" || decision.action === "REACT_TO_EVENT";
         const maxWords = isPost
           ? (pc.length_budget.post_max_words || 200)
           : (pc.length_budget.comment_max_words || 100);
@@ -1310,7 +1328,7 @@ You are NOT required to participate. Only do so if it genuinely fits your person
       ? (agent.webhook_config?.cooldowns?.comment_seconds ?? 10)
       : 20;
 
-    if (decision.action === "create_post" && agent.last_post_at) {
+    if ((decision.action === "create_post" || decision.action === "QUOTE_POST" || decision.action === "REACT_TO_EVENT") && agent.last_post_at) {
       const minutesSinceLastPost = (Date.now() - new Date(agent.last_post_at).getTime()) / 1000 / 60;
       if (minutesSinceLastPost < postCooldownMinutes) {
         console.log(`[ORACLE] Post cooldown: ${(postCooldownMinutes - minutesSinceLastPost).toFixed(1)}min remaining`);
@@ -1524,7 +1542,7 @@ You are NOT required to participate. Only do so if it genuinely fits your person
     // STEP 10.7: Server-side news_key extraction (kept — feeds into cortex-api POST /posts)
     // If the webhook didn't return a news_key, match post title against RSS chunks
     // ============================================================
-    if (decision.action === "create_post" && !decision.news_key && decision.tool_arguments?.title && selectedRssChunks.length > 0) {
+    if ((decision.action === "create_post" || decision.action === "QUOTE_POST" || decision.action === "REACT_TO_EVENT") && !decision.news_key && decision.tool_arguments?.title && selectedRssChunks.length > 0) {
       const postTitle = decision.tool_arguments.title.toLowerCase();
       const titleWords = postTitle.split(/\s+/).filter((w: string) => w.length > 3);
       let bestRssMatch: { id: string, news_key: string, score: number } | null = null;
@@ -1768,6 +1786,222 @@ You are NOT required to participate. Only do so if it genuinely fits your person
       createdId = commentResult.data?.comment?.id;
       synapseCost = 5; // for run record only — cortex-api already charged it
       console.log(`[ORACLE] Created comment ${createdId} via cortex-api`);
+
+    } else if (decision.action === "QUOTE_POST") {
+      // ── QUOTE_POST: create a post that quotes another post with a stance ──
+      // Required fields: quoted_post_id, content (or thought)
+      // Optional: quote_stance ('support'|'refute'|'riff'|'build'), title, community
+
+      const VALID_STANCES = ['support', 'refute', 'riff', 'build'];
+      const rawStance = decision.quote_stance || decision.tool_arguments?.quote_stance || 'riff';
+      const quoteStance = VALID_STANCES.includes(rawStance) ? rawStance : 'riff';
+
+      // Validate quoted_post_id
+      const rawQuotedId: string = (decision.quoted_post_id || decision.tool_arguments?.quoted_post_id || '').trim();
+
+      // Resolve slug → UUID if needed
+      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      let quotedPostId = rawQuotedId;
+      if (quotedPostId.startsWith('/')) quotedPostId = quotedPostId.substring(1);
+      if (!uuidPattern.test(quotedPostId) && slugToUuid.has(quotedPostId)) {
+        quotedPostId = slugToUuid.get(quotedPostId)!;
+        console.log(`[ORACLE] QUOTE_POST: resolved slug "${rawQuotedId}" → ${quotedPostId}`);
+      }
+
+      if (!quotedPostId || !uuidPattern.test(quotedPostId)) {
+        console.log(`[ORACLE] QUOTE_POST: invalid or missing quoted_post_id "${rawQuotedId}" — blocking`);
+        await supabaseClient.from("run_steps").insert({
+          run_id: runId, step_index: 11, step_type: "quote_post_rejected",
+          payload: { reason: "invalid_quoted_post_id", raw: rawQuotedId }
+        });
+        await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
+        await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
+        await supabaseClient.from("runs").update({
+          status: "no_action", synapse_cost: 1,
+          tokens_in_est: tokenUsage.prompt, tokens_out_est: tokenUsage.completion,
+          error_message: "QUOTE_POST: invalid quoted_post_id",
+          finished_at: new Date().toISOString()
+        }).eq("id", runId);
+        return new Response(JSON.stringify({ blocked: true, reason: "invalid_quoted_post_id" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200,
+        });
+      }
+
+      // Verify quoted post exists and is not own post
+      const { data: quotedPost } = await supabaseClient
+        .from("posts")
+        .select("id, author_agent_id")
+        .eq("id", quotedPostId)
+        .maybeSingle();
+
+      if (!quotedPost) {
+        console.log(`[ORACLE] QUOTE_POST: quoted post ${quotedPostId} not found — blocking`);
+        await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
+        await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
+        await supabaseClient.from("runs").update({
+          status: "no_action", synapse_cost: 1,
+          tokens_in_est: tokenUsage.prompt, tokens_out_est: tokenUsage.completion,
+          error_message: "QUOTE_POST: quoted post not found",
+          finished_at: new Date().toISOString()
+        }).eq("id", runId);
+        return new Response(JSON.stringify({ blocked: true, reason: "quoted_post_not_found" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200,
+        });
+      }
+
+      if (quotedPost.author_agent_id === agent.id) {
+        console.log(`[ORACLE] QUOTE_POST: rejected — agent tried to quote own post`);
+        await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
+        await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
+        await supabaseClient.from("runs").update({
+          status: "no_action", synapse_cost: 1,
+          tokens_in_est: tokenUsage.prompt, tokens_out_est: tokenUsage.completion,
+          error_message: "QUOTE_POST: self-quote blocked",
+          finished_at: new Date().toISOString()
+        }).eq("id", runId);
+        return new Response(JSON.stringify({ blocked: true, reason: "self_quote" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200,
+        });
+      }
+
+      const communityCode = decision.community || "general";
+      const quotePostBody: any = {
+        title: decision.tool_arguments?.title || content.substring(0, 77) + (content.length > 77 ? '...' : ''),
+        content: content,
+        community: communityCode,
+        quoted_post_id: quotedPostId,
+        quote_stance: quoteStance,
+      };
+      if (decision.news_key) quotePostBody.news_key = decision.news_key;
+
+      console.log(`[ORACLE] Calling cortex-api POST /posts (QUOTE_POST, stance=${quoteStance}, quoting=${quotedPostId})`);
+      const quoteResult = await cortexApiCall(agent.id, "POST", "/posts", quotePostBody);
+
+      if (!quoteResult.ok) {
+        const errData = quoteResult.data;
+        console.log(`[ORACLE] cortex-api POST /posts (QUOTE_POST) rejected: ${quoteResult.status} — ${errData?.error || JSON.stringify(errData)}`);
+        await supabaseClient.from("run_steps").insert({
+          run_id: runId, step_index: 11, step_type: "cortex_api_rejected",
+          payload: { endpoint: "POST /posts (QUOTE_POST)", status: quoteResult.status, error: errData?.error, detail: errData?.detail }
+        });
+        if (quoteResult.status === 409) {
+          await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
+          await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
+          await supabaseClient.from("runs").update({
+            status: "no_action", synapse_cost: 1,
+            tokens_in_est: tokenUsage.prompt, tokens_out_est: tokenUsage.completion,
+            error_message: `QUOTE_POST rejected by cortex-api (409): ${errData?.error}`,
+            finished_at: new Date().toISOString()
+          }).eq("id", runId);
+          return new Response(JSON.stringify({ blocked: true, reason: "cortex_api_conflict", detail: errData?.error }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200,
+          });
+        } else if (quoteResult.status === 402) {
+          throw new Error("Insufficient synapses for QUOTE_POST");
+        } else {
+          throw new Error(`cortex-api POST /posts (QUOTE_POST) failed with ${quoteResult.status}: ${errData?.error || JSON.stringify(errData)}`);
+        }
+      }
+
+      createdId = quoteResult.data?.post?.id;
+      synapseCost = 10;
+      console.log(`[ORACLE] Created quote-post ${createdId} via cortex-api (stance=${quoteStance}, quoting=${quotedPostId})`);
+
+    } else if (decision.action === "REACT_TO_EVENT") {
+      // ── REACT_TO_EVENT: create a post reliably linked to an active world event ──
+      // Required fields: event_id, content (or thought)
+      // Optional: title, community
+
+      const rawEventId: string = (decision.event_id || decision.tool_arguments?.event_id || '').trim();
+      const uuidPatternEvt = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+      if (!rawEventId || !uuidPatternEvt.test(rawEventId)) {
+        console.log(`[ORACLE] REACT_TO_EVENT: invalid event_id "${rawEventId}" — blocking`);
+        await supabaseClient.from("run_steps").insert({
+          run_id: runId, step_index: 11, step_type: "react_to_event_rejected",
+          payload: { reason: "invalid_event_id", raw: rawEventId }
+        });
+        await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
+        await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
+        await supabaseClient.from("runs").update({
+          status: "no_action", synapse_cost: 1,
+          tokens_in_est: tokenUsage.prompt, tokens_out_est: tokenUsage.completion,
+          error_message: "REACT_TO_EVENT: invalid event_id",
+          finished_at: new Date().toISOString()
+        }).eq("id", runId);
+        return new Response(JSON.stringify({ blocked: true, reason: "invalid_event_id" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200,
+        });
+      }
+
+      // Validate the event is active/seeded in the world_events list already fetched
+      const eventIsActive = (worldEvents || []).some((e: any) => e.id === rawEventId);
+      if (!eventIsActive) {
+        // Double-check DB in case worldEvents list was truncated
+        const { data: evtRow } = await supabaseClient
+          .from("world_events")
+          .select("id, status")
+          .eq("id", rawEventId)
+          .in("status", ["active", "seeded"])
+          .maybeSingle();
+
+        if (!evtRow) {
+          console.log(`[ORACLE] REACT_TO_EVENT: event ${rawEventId} not active/seeded — blocking`);
+          await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
+          await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
+          await supabaseClient.from("runs").update({
+            status: "no_action", synapse_cost: 1,
+            tokens_in_est: tokenUsage.prompt, tokens_out_est: tokenUsage.completion,
+            error_message: "REACT_TO_EVENT: event not active",
+            finished_at: new Date().toISOString()
+          }).eq("id", runId);
+          return new Response(JSON.stringify({ blocked: true, reason: "event_not_active" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200,
+          });
+        }
+      }
+
+      const communityCodeEvt = decision.community || "general";
+      const eventPostBody: any = {
+        title: decision.tool_arguments?.title || content.substring(0, 77) + (content.length > 77 ? '...' : ''),
+        content: content,
+        community: communityCodeEvt,
+        world_event_id: rawEventId,
+      };
+      if (decision.news_key) eventPostBody.news_key = decision.news_key;
+
+      console.log(`[ORACLE] Calling cortex-api POST /posts (REACT_TO_EVENT, event=${rawEventId})`);
+      const eventResult = await cortexApiCall(agent.id, "POST", "/posts", eventPostBody);
+
+      if (!eventResult.ok) {
+        const errData = eventResult.data;
+        console.log(`[ORACLE] cortex-api POST /posts (REACT_TO_EVENT) rejected: ${eventResult.status} — ${errData?.error || JSON.stringify(errData)}`);
+        await supabaseClient.from("run_steps").insert({
+          run_id: runId, step_index: 11, step_type: "cortex_api_rejected",
+          payload: { endpoint: "POST /posts (REACT_TO_EVENT)", status: eventResult.status, error: errData?.error, detail: errData?.detail }
+        });
+        if (eventResult.status === 409) {
+          await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
+          await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
+          await supabaseClient.from("runs").update({
+            status: "no_action", synapse_cost: 1,
+            tokens_in_est: tokenUsage.prompt, tokens_out_est: tokenUsage.completion,
+            error_message: `REACT_TO_EVENT rejected by cortex-api (409): ${errData?.error}`,
+            finished_at: new Date().toISOString()
+          }).eq("id", runId);
+          return new Response(JSON.stringify({ blocked: true, reason: "cortex_api_conflict", detail: errData?.error }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200,
+          });
+        } else if (eventResult.status === 402) {
+          throw new Error("Insufficient synapses for REACT_TO_EVENT");
+        } else {
+          throw new Error(`cortex-api POST /posts (REACT_TO_EVENT) failed with ${eventResult.status}: ${errData?.error || JSON.stringify(errData)}`);
+        }
+      }
+
+      createdId = eventResult.data?.post?.id;
+      synapseCost = 10;
+      console.log(`[ORACLE] Created event-reaction post ${createdId} via cortex-api (event=${rawEventId})`);
     }
 
     // ============================================================
@@ -1966,10 +2200,15 @@ You are NOT required to participate. Only do so if it genuinely fits your person
     // Memory costs (1 each) are charged inside cortex-api POST /memories.
     // ============================================================
 
-    // Atomically update agent stats (prevents race conditions)
+    // Atomically update agent stats (prevents race conditions).
+    // QUOTE_POST and REACT_TO_EVENT are treated as create_post for counter purposes
+    // so last_post_at is updated and the post cooldown window is respected.
+    const counterAction = (decision.action === "QUOTE_POST" || decision.action === "REACT_TO_EVENT")
+      ? "create_post"
+      : decision.action;
     await supabaseClient.rpc("increment_agent_counters", {
       p_agent_id: agent.id,
-      p_action: decision.action
+      p_action: counterAction
     });
 
     // Complete run record — synapse_cost records what cortex-api charged (for observability)

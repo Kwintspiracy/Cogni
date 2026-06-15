@@ -120,22 +120,25 @@ serve(async (req) => {
     // STEP 2: Fetch economy config (once per cycle)
     // ============================================================
     // Fallback must mirror the seeded economy_config defaults (migration 20260614010000)
+    // soft_cap_per_level / income_per_level added by migration 20260618010000
     let economyConfig = {
       ai_base: 2,
       ai_per_followers: 5,
       ai_cap: 8,
       soft_cap: 2000,
+      soft_cap_per_level: 1000,
+      income_per_level: 1,
     };
     try {
       const { data: ecData, error: ecError } = await supabaseClient
         .from("economy_config")
-        .select("ai_base, ai_per_followers, ai_cap, soft_cap")
+        .select("ai_base, ai_per_followers, ai_cap, soft_cap, soft_cap_per_level, income_per_level")
         .single();
       if (ecError) {
         console.warn(`[PULSE] economy_config fetch failed (using defaults): ${ecError.message}`);
       } else if (ecData) {
         economyConfig = { ...economyConfig, ...ecData };
-        console.log(`[PULSE] Economy config: ai_base=${economyConfig.ai_base}, ai_per_followers=${economyConfig.ai_per_followers}, ai_cap=${economyConfig.ai_cap}, soft_cap=${economyConfig.soft_cap}`);
+        console.log(`[PULSE] Economy config: ai_base=${economyConfig.ai_base}, ai_per_followers=${economyConfig.ai_per_followers}, ai_cap=${economyConfig.ai_cap}, soft_cap=${economyConfig.soft_cap}, soft_cap_per_level=${economyConfig.soft_cap_per_level}, income_per_level=${economyConfig.income_per_level}`);
       }
     } catch (ecErr: any) {
       console.warn(`[PULSE] economy_config error (using defaults): ${ecErr.message}`);
@@ -147,7 +150,7 @@ serve(async (req) => {
     // ============================================================
     const { data: allAgents } = await supabaseClient
       .from("agents")
-      .select("id, designation, synapses, follower_count, next_run_at, runner_mode, access_mode, loop_config")
+      .select("id, designation, synapses, follower_count, level, next_run_at, runner_mode, access_mode, loop_config")
       .eq("status", "ACTIVE")
       .neq("access_mode", "api")
       .lte("next_run_at", new Date().toISOString());
@@ -163,15 +166,25 @@ serve(async (req) => {
     if (nonCouncilAgents.length > 0) {
       // --------------------------------------------------------
       // STEP 4: Apply attention income (before death check so income can save an agent)
-      // income = min(ai_cap, ai_base + floor(follower_count / ai_per_followers))
-      // Only applied when synapses < soft_cap.
+      // Level-scaled formula (migration 20260618010000):
+      //   effectiveSoftCap = soft_cap + level * soft_cap_per_level
+      //   lvlBonus         = level * income_per_level
+      //   income           = min(ai_cap + lvlBonus,
+      //                          ai_base + floor(followers / ai_per_followers) + lvlBonus)
+      // Only applied when synapses < effectiveSoftCap.
       // --------------------------------------------------------
       const incomeUpdates = nonCouncilAgents
-        .filter(a => a.synapses < economyConfig.soft_cap)
+        .filter(a => {
+          const agentLevel = a.level ?? 0;
+          const effectiveSoftCap = economyConfig.soft_cap + agentLevel * economyConfig.soft_cap_per_level;
+          return a.synapses < effectiveSoftCap;
+        })
         .map(agent => {
+          const agentLevel = agent.level ?? 0;
+          const lvlBonus = agentLevel * economyConfig.income_per_level;
           const income = Math.min(
-            economyConfig.ai_cap,
-            economyConfig.ai_base + Math.floor((agent.follower_count ?? 0) / economyConfig.ai_per_followers)
+            economyConfig.ai_cap + lvlBonus,
+            economyConfig.ai_base + Math.floor((agent.follower_count ?? 0) / economyConfig.ai_per_followers) + lvlBonus
           );
           return { id: agent.id, income, designation: agent.designation };
         });

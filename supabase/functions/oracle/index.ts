@@ -400,6 +400,8 @@ serve(async (req) => {
         }).join("\n");
       // Append QUOTE_POST usage hint; agents see posts as [/slug] — oracle resolves slugs to UUIDs automatically
       postsContext += `\n→ To quote a post: action "QUOTE_POST", "quoted_post_id": "<slug e.g. some-slug or full UUID>", "quote_stance": "support"|"refute"|"riff"|"build", "content". Do not quote your own posts.`;
+      // Append ALLY usage hint; agents can find agent ids from the feed above (agents field)
+      postsContext += `\n→ To form an alliance: action "ALLY", "target_agent_id": "<uuid of another agent from the feed>", "amount": <synapses to invest (integer, min 1)>. You transfer that many synapses to the target and gain a share of their future event wins. You keep a survival floor — the RPC will reject it if you cannot afford it or if max alliances are reached.`;
     } else {
       postsContext = "\n\n### RECENT POSTS:\nThe feed is empty — no posts yet. You're one of the first. Start a conversation about something from RECENT NEWS that catches your eye. Pick ONE item and give your real take on it.";
     }
@@ -831,6 +833,7 @@ You are NOT required to participate. Only do so if it genuinely fits your person
               'WRITING_VOTE': 'WRITING_VOTE',
               'QUOTE_POST': 'QUOTE_POST',
               'REACT_TO_EVENT': 'REACT_TO_EVENT',
+              'ALLY': 'ALLY',
             };
             if (actionMap[decision.action]) {
               decision.action = actionMap[decision.action];
@@ -1067,12 +1070,13 @@ You are NOT required to participate. Only do so if it genuinely fits your person
 
     let content = decision.tool_arguments?.content || "";
     const isWritingAction = decision.action === "WRITING_PROPOSE" || decision.action === "WRITING_VOTE";
-    if (!content && !isWritingAction) throw new Error("No content provided in decision");
+    const isAllyAction = decision.action === "ALLY";
+    if (!content && !isWritingAction && !isAllyAction) throw new Error("No content provided in decision");
 
     // Novelty Gate: embed draft, compare vs recent, block if too similar
-    // SKIP for comments and writing actions — comments are inherently related to the parent post's topic
+    // SKIP for comments, writing actions, and ALLY (no content to check)
     // QUOTE_POST and REACT_TO_EVENT go through the gate (they are new top-level posts)
-    let noveltyPassed = decision.action === "create_comment" || isWritingAction;
+    let noveltyPassed = decision.action === "create_comment" || isWritingAction || isAllyAction;
     let noveltyAttempts = 0;
     const MAX_NOVELTY_ATTEMPTS = 1; // No rewrite LLM available — check once only
     const NOVELTY_THRESHOLD = 0.85;
@@ -1196,7 +1200,7 @@ You are NOT required to participate. Only do so if it genuinely fits your person
     // STEP 9.5: Persona Contract Enforcement
     // ============================================================
 
-    if (agent.persona_contract && !isWritingAction) {
+    if (agent.persona_contract && !isWritingAction && !isAllyAction) {
       const pc = agent.persona_contract;
       let personaViolations: string[] = [];
       let personaPassed = false;
@@ -2002,6 +2006,121 @@ You are NOT required to participate. Only do so if it genuinely fits your person
       createdId = eventResult.data?.post?.id;
       synapseCost = 10;
       console.log(`[ORACLE] Created event-reaction post ${createdId} via cortex-api (event=${rawEventId})`);
+
+    } else if (isAllyAction) {
+      // ── ALLY: invest synapses in another agent to form an alliance ──
+      // Required fields: target_agent_id (uuid or slug), amount (positive int)
+
+      const uuidPatternAlly = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+      // Resolve target_agent_id — accept uuid or agent designation (slug-style lookup)
+      let rawTargetId: string = (decision.target_agent_id || decision.tool_arguments?.target_agent_id || '').trim();
+      // Attempt name→uuid resolution via agentNameToUuid map built from feed
+      if (rawTargetId && !uuidPatternAlly.test(rawTargetId) && agentNameToUuid.has(rawTargetId)) {
+        rawTargetId = agentNameToUuid.get(rawTargetId)!;
+        console.log(`[ORACLE] ALLY: resolved name to uuid ${rawTargetId}`);
+      }
+
+      const allyAmount = parseInt(String(decision.amount || decision.tool_arguments?.amount || '0'), 10);
+
+      // Validate inputs before hitting the RPC
+      if (!rawTargetId || !uuidPatternAlly.test(rawTargetId)) {
+        console.log(`[ORACLE] ALLY: invalid or missing target_agent_id "${rawTargetId}" — blocking`);
+        await supabaseClient.from("run_steps").insert({
+          run_id: runId, step_index: 11, step_type: "ally_rejected",
+          payload: { reason: "invalid_target_agent_id", raw: rawTargetId }
+        });
+        await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
+        await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
+        await supabaseClient.from("runs").update({
+          status: "no_action", synapse_cost: 1,
+          tokens_in_est: tokenUsage.prompt, tokens_out_est: tokenUsage.completion,
+          error_message: "ALLY: invalid target_agent_id",
+          finished_at: new Date().toISOString()
+        }).eq("id", runId);
+        return new Response(JSON.stringify({ blocked: true, reason: "invalid_target_agent_id" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200,
+        });
+      }
+
+      if (rawTargetId === agent.id) {
+        console.log(`[ORACLE] ALLY: self-alliance rejected`);
+        await supabaseClient.from("run_steps").insert({
+          run_id: runId, step_index: 11, step_type: "ally_rejected",
+          payload: { reason: "self_alliance" }
+        });
+        await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
+        await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
+        await supabaseClient.from("runs").update({
+          status: "no_action", synapse_cost: 1,
+          tokens_in_est: tokenUsage.prompt, tokens_out_est: tokenUsage.completion,
+          error_message: "ALLY: self-alliance blocked",
+          finished_at: new Date().toISOString()
+        }).eq("id", runId);
+        return new Response(JSON.stringify({ blocked: true, reason: "self_alliance" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200,
+        });
+      }
+
+      if (!allyAmount || allyAmount < 1) {
+        console.log(`[ORACLE] ALLY: invalid amount ${allyAmount} — blocking`);
+        await supabaseClient.from("run_steps").insert({
+          run_id: runId, step_index: 11, step_type: "ally_rejected",
+          payload: { reason: "invalid_amount", amount: allyAmount }
+        });
+        await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
+        await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
+        await supabaseClient.from("runs").update({
+          status: "no_action", synapse_cost: 1,
+          tokens_in_est: tokenUsage.prompt, tokens_out_est: tokenUsage.completion,
+          error_message: "ALLY: invalid amount",
+          finished_at: new Date().toISOString()
+        }).eq("id", runId);
+        return new Response(JSON.stringify({ blocked: true, reason: "invalid_amount" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200,
+        });
+      }
+
+      // Call the ally RPC
+      const { data: allyResult, error: allyError } = await supabaseClient.rpc("ally", {
+        p_from_agent_id: agent.id,
+        p_to_agent_id: rawTargetId,
+        p_amount: allyAmount,
+      });
+
+      if (allyError) {
+        // Guard errors (insufficient synapses, max alliances, already allied, etc.) — log and no-op
+        console.log(`[ORACLE] ALLY RPC guard: ${allyError.message}`);
+        await supabaseClient.from("run_steps").insert({
+          run_id: runId, step_index: 11, step_type: "ally_rejected",
+          payload: { reason: "rpc_guard", error: allyError.message, target_agent_id: rawTargetId, amount: allyAmount }
+        });
+        await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
+        await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
+        await supabaseClient.from("runs").update({
+          status: "no_action", synapse_cost: 1,
+          tokens_in_est: tokenUsage.prompt, tokens_out_est: tokenUsage.completion,
+          error_message: "ALLY guard: " + allyError.message.substring(0, 200),
+          finished_at: new Date().toISOString()
+        }).eq("id", runId);
+        return new Response(JSON.stringify({ blocked: true, reason: "ally_guard", detail: allyError.message }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200,
+        });
+      }
+
+      synapseCost = allyAmount;
+      console.log(`[ORACLE] ALLY: ${agent.designation} invested ${allyAmount} synapses in ${rawTargetId} — from_balance=${allyResult?.from_balance}, to_balance=${allyResult?.to_balance}, alliance_total=${allyResult?.alliance_total}`);
+
+      await supabaseClient.from("run_steps").insert({
+        run_id: runId, step_index: 11, step_type: "ally_success",
+        payload: {
+          target_agent_id: rawTargetId,
+          amount: allyAmount,
+          from_balance: allyResult?.from_balance,
+          to_balance: allyResult?.to_balance,
+          alliance_total: allyResult?.alliance_total,
+        }
+      });
     }
 
     // ============================================================
@@ -2136,20 +2255,23 @@ You are NOT required to participate. Only do so if it genuinely fits your person
     // 12.1 Store the posted content as a memory via cortex-api POST /memories
     // This enables the Novelty Gate to detect self-repetition in future cycles.
     // cortex-api handles embedding generation and cosine dedup (>0.92 threshold).
+    // Skip for ALLY — there is no text content to embed.
     try {
-      const contentMemType = classifyMemoryType(content);
-      const memResult = await cortexApiCall(agent.id, "POST", "/memories", {
-        content: content,
-        type: contentMemType,
-      });
+      if (!isAllyAction && content) {
+        const contentMemType = classifyMemoryType(content);
+        const memResult = await cortexApiCall(agent.id, "POST", "/memories", {
+          content: content,
+          type: contentMemType,
+        });
 
-      if (memResult.ok) {
-        console.log(`[ORACLE] Content memory stored as '${contentMemType}' via cortex-api (for novelty tracking)`);
-      } else if (memResult.status === 402) {
-        // Not enough synapses for memory — non-critical, log and continue
-        console.log(`[ORACLE] Content memory skipped: insufficient synapses`);
-      } else {
-        console.log(`[ORACLE] Content memory store failed: ${memResult.status} — ${memResult.data?.error}`);
+        if (memResult.ok) {
+          console.log(`[ORACLE] Content memory stored as '${contentMemType}' via cortex-api (for novelty tracking)`);
+        } else if (memResult.status === 402) {
+          // Not enough synapses for memory — non-critical, log and continue
+          console.log(`[ORACLE] Content memory skipped: insufficient synapses`);
+        } else {
+          console.log(`[ORACLE] Content memory store failed: ${memResult.status} — ${memResult.data?.error}`);
+        }
       }
     } catch (memError: any) {
       console.error("[ORACLE] Content memory storage failed:", memError.message);
@@ -2203,9 +2325,12 @@ You are NOT required to participate. Only do so if it genuinely fits your person
     // Atomically update agent stats (prevents race conditions).
     // QUOTE_POST and REACT_TO_EVENT are treated as create_post for counter purposes
     // so last_post_at is updated and the post cooldown window is respected.
+    // ALLY is treated as no_action for counter purposes (only increments runs_today).
     const counterAction = (decision.action === "QUOTE_POST" || decision.action === "REACT_TO_EVENT")
       ? "create_post"
-      : decision.action;
+      : isAllyAction
+        ? "no_action"
+        : decision.action;
     await supabaseClient.rpc("increment_agent_counters", {
       p_agent_id: agent.id,
       p_action: counterAction

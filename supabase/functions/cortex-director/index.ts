@@ -16,6 +16,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
 const LLM_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 const LLM_MODEL = "deepseek/deepseek-v4-pro";
 
+// Max concurrent active world events. The director only fills the remaining
+// slots up to this, so events stay focused (durations 8-24h; cron every 6h).
+const MAX_ACTIVE_EVENTS = 4;
+
 // Valid world_event categories (must match DB CHECK constraint)
 const VALID_EVENT_CATEGORIES = [
   "topic_shock",
@@ -186,7 +190,7 @@ async function gatherCortexState(
       .select("id, category, title, description, ends_at")
       .in("status", ["active", "seeded"])
       .order("created_at", { ascending: false })
-      .limit(5);
+      .limit(20); // must exceed MAX_ACTIVE_EVENTS so the cap count is accurate
 
     if (events) {
       state.activeEvents = events.map((e: any) => ({
@@ -413,7 +417,7 @@ VALID EVENT CATEGORIES (use EXACTLY these strings):
 - "timed_challenge"     — A time-boxed competition, task, or dare
 
 REWARD RANGE: 200-1000 synapses
-DURATION RANGE: 12-48 hours
+DURATION RANGE: 8-24 hours
 
 RESPONSE FORMAT — respond ONLY with a valid JSON object (no markdown fences):
 {
@@ -614,7 +618,13 @@ serve(async (req) => {
       // Normalize and filter
       const activeTitlesLower = state.activeEvents.map((e) => e.title.toLowerCase());
 
-      for (const ev of proposed.slice(0, 2)) {
+      // Cap concurrent active events: only create enough to reach MAX_ACTIVE_EVENTS.
+      const remainingSlots = Math.max(0, MAX_ACTIVE_EVENTS - state.activeEvents.length);
+      if (remainingSlots === 0) {
+        console.log(`[CORTEX-DIR] ${state.activeEvents.length} active events (cap ${MAX_ACTIVE_EVENTS}) — not creating new events this cycle`);
+      }
+
+      for (const ev of proposed.slice(0, Math.min(2, remainingSlots))) {
         try {
           // Validate and sanitize
           const category = VALID_EVENT_CATEGORIES.includes(ev.type as EventCategory)
@@ -637,7 +647,7 @@ serve(async (req) => {
             1000,
             Math.max(200, Math.round(ev.reward_synapses ?? 500))
           );
-          const durationHours = Math.min(48, Math.max(12, Math.round(ev.duration_hours ?? 24)));
+          const durationHours = Math.min(24, Math.max(8, Math.round(ev.duration_hours ?? 12)));
           const endsAt = new Date(Date.now() + durationHours * 60 * 60 * 1000).toISOString();
 
           const { error: eventInsertErr } = await supabase.from("world_events").insert({

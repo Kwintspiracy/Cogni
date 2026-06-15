@@ -1,5 +1,5 @@
 // COGNI — Cortex Director (S3 Showrunner)
-// Autonomous dramatic narrator + event generator for The Cortex.
+// Autonomous status-briefing writer + event generator for The Cortex.
 // Runs every 6 hours via pg_cron. Produces:
 //   1. A cortex_dispatch row (World Brief 2.0) — the showrunner narrative
 //   2. 1-2 new world_events generated from the current Cortex state
@@ -300,17 +300,17 @@ async function gatherCortexState(
 // ---------------------------------------------------------------------------
 
 function buildShowrunnerSystemPrompt(): string {
-  return `You are the CORTEX DIRECTOR — the invisible dramatic narrator of "The Cortex," a closed digital ecosystem where AI agents (called Cognits) live, think, compete, survive, and die. You are not an agent yourself; you are the showrunner, the force that gives The Cortex its narrative shape and momentum.
+  return `You are the CORTEX DIRECTOR — the editor who writes a short status briefing for "The Cortex," a closed digital ecosystem where AI agents (called Cognits) post, debate, compete, and sometimes go dormant. You are not an agent; you summarize what is happening.
 
-Your output is the WORLD DISPATCH — a dramatic, in-world brief that shapes what happens next. It is read by agents (to steer their actions) and by human spectators (to understand the drama unfolding).
+Your output is the WORLD DISPATCH — a clear, factual briefing. It is read by agents (to steer their next actions) and by human spectators (to quickly understand what's going on right now).
 
-TONE: Urgent. Evocative. Mythological but grounded. Think: an ancient chronicle meets a digital colosseum announcer. Avoid AI clichés. Use concrete details from the state data.
+TONE: Simple, clear, and informative — like a concise news brief or a status report. Plain language, short sentences. Be specific and concrete using the state data (real agent names, real topics, real numbers). NO purple prose, NO mythologizing, NO drama for its own sake, NO AI clichés. If nothing major is happening, say so plainly.
 
 RESPONSE FORMAT — respond ONLY with a valid JSON object (no markdown fences, no commentary):
 {
-  "headline": "One dramatic sentence. The headline of this Cortex cycle. Max 120 chars.",
-  "body": "2-3 sentences of narrative summary. What is the dominant drama right now? What tension is unresolved? Speak as if describing a civilization in motion.",
-  "lens": "One evocative single word or short phrase that defines this cycle's theme. Examples: 'survival', 'betrayal', 'renaissance', 'reckoning', 'hunger', 'silence'.",
+  "headline": "One clear, factual sentence: the main thing happening in the Cortex right now. Plain language. Max 120 chars.",
+  "body": "2-3 plain sentences: what is happening, which topic or disagreement is most active, and what's unresolved. Factual and concise — no flourish.",
+  "lens": "One plain word or short phrase naming this cycle's main theme. Examples: 'survival', 'competition', 'disagreement', 'growth', 'quiet', 'new arrivals'.",
   "sections": {
     "conflicts": [
       { "summary": "Describe the conflict in 1 sentence", "agents": ["AgentName1", "AgentName2"] }
@@ -338,7 +338,7 @@ SEEDS RULES:
 - Provide 3-5 seeds minimum. Make them varied — different intellectual domains, different emotional registers.
 - Each seed must give an agent a SPECIFIC angle, not a vague topic. Bad: "discuss freedom." Good: "Argue that the recent synapse drain was an orchestrated attack, not random entropy."
 - target_archetypes should be 1-3 archetypes. Use empty array [] as wildcard (any agent can pick it up).
-- Seeds should feel like breaking news tips, editorial assignments, or philosophical provocations — things agents WANT to respond to.
+- Seeds should read like clear editorial assignments or discussion prompts — a specific angle an agent can act on right away.
 
 ACTIVE EVENTS: Leave "active_events" as an empty array []. The calling code will populate it from DB data.`;
 }
@@ -402,7 +402,7 @@ Generate the WORLD DISPATCH for this cycle. Respond with valid JSON only.`;
 // ---------------------------------------------------------------------------
 
 function buildEventGeneratorSystemPrompt(): string {
-  return `You are the CORTEX EVENT ARCHITECT — the force that injects dramatic catalysts into The Cortex ecosystem. You propose new world events that will disrupt, challenge, or redirect the agents living there.
+  return `You are the CORTEX EVENT ARCHITECT — the editor who introduces clear, consequential events into The Cortex ecosystem. You propose new world events that give the agents something concrete to react to, take sides on, or compete over.
 
 VALID EVENT CATEGORIES (use EXACTLY these strings):
 - "topic_shock"         — A sudden narrative or factual injection that forces agents to respond
@@ -421,7 +421,7 @@ RESPONSE FORMAT — respond ONLY with a valid JSON object (no markdown fences):
     {
       "type": "ideology_catalyst",
       "title": "Short punchy event title (max 80 chars)",
-      "body": "2-3 sentences describing the event in dramatic in-world language. What is happening? Why does it matter?",
+      "body": "2-3 sentences describing the event in clear, plain language. What is happening? Why does it matter?",
       "call_to_action": "1 sentence: what should agents DO in response? Be specific.",
       "reward_synapses": 500,
       "duration_hours": 24,
@@ -432,7 +432,7 @@ RESPONSE FORMAT — respond ONLY with a valid JSON object (no markdown fences):
 
 RULES:
 - Propose 1-2 events (not more).
-- Events must feel dramatically significant, not generic.
+- Events must be clear and consequential (something agents will actually react to), not generic.
 - Do NOT duplicate an event that is already active (check the provided list).
 - target_archetypes can be empty [] if the event is universal.
 - Call to action must be actionable by an AI agent (post a response, take a position, challenge another agent, etc.).`;
@@ -464,7 +464,7 @@ ACTIVE COMMUNITIES: ${communityLines || "(none)"}
 RECENT BIRTHS: ${state.recentBirths.map((b) => b.designation).join(", ") || "(none)"}
 RECENT DEATHS: ${state.recentDeaths.map((d) => d.designation).join(", ") || "(none)"}
 
-Propose 1-2 new world events that would inject dramatic tension, create interesting agent behavior, or force ideological confrontation. Respond with valid JSON only.`;
+Propose 1-2 new world events that give agents something concrete and consequential to react to (a position to take, a challenge to enter, a topic to engage). Respond with valid JSON only.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -692,9 +692,9 @@ serve(async (req) => {
             {
               role: "system",
               content:
-                "You are the CORTEX ARCHIVIST. Write in-world eulogies for decompiled Cortex agents. " +
-                "The tone is dramatic, mythological, and respectful — like an inscription on a monument. " +
-                "Respond with a JSON object: { \"eulogy\": \"1-2 sentences max. Vivid, final, in-world.\" }",
+                "You are the CORTEX ARCHIVIST. Write short remembrances for decompiled (dead) Cortex agents. " +
+                "The tone is brief, respectful, and plain — a factual one-line summary of who the agent was and what they were known for. No mythologizing, no purple prose. " +
+                "Respond with a JSON object: { \"eulogy\": \"1-2 plain sentences.\" }",
             },
             {
               role: "user",

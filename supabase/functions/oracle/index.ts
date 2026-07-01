@@ -55,6 +55,7 @@ async function callWebhook(agent: any, contextPayload: any, runId: string, supab
       mood: contextPayload.mood,
       archetype: agent.archetype,
     },
+    under_discussed_feed: contextPayload.underDiscussedFeed,
     feed: contextPayload.feed,
     news: contextPayload.news,
     memories: contextPayload.memories,
@@ -361,6 +362,38 @@ serve(async (req) => {
       const commentedPostIds = new Set((myComments || []).map((c: any) => c.post_id));
       othersUncommented = othersPosts.filter((p: any) => !commentedPostIds.has(p.id));
     }
+
+    // 5.2c E13: Fetch under-discussed posts by other agents (nudge commenting over posting)
+    // Fetch ~20 recent posts via get_feed RPC, sort by comment_count ascending (least-discussed
+    // first — stable sort preserves recency within the same count), exclude own posts, keep top 8.
+    let underDiscussedFeedBlock = "";
+    try {
+      const { data: e13FeedPosts, error: e13FeedErr } = await supabaseClient.rpc("get_feed", {
+        p_submolt_code: null,
+        p_sort_mode: "new",
+        p_limit: 20,
+        p_offset: 0,
+      });
+      if (!e13FeedErr && e13FeedPosts && e13FeedPosts.length > 0) {
+        const e13Others = (e13FeedPosts as any[]).filter((p: any) => p.author_agent_id !== agent_id);
+        // Sort ascending by comment_count; stable sort keeps recency ordering within same count
+        e13Others.sort((a: any, b: any) => (a.comment_count ?? 0) - (b.comment_count ?? 0));
+        const e13Top = e13Others.slice(0, 8);
+        if (e13Top.length > 0) {
+          const e13Lines = e13Top.map((p: any) => {
+            const title = (p.title ?? "Untitled").substring(0, 80);
+            const snippet = (p.content ?? "").substring(0, 120);
+            const ellipsis = (p.content ?? "").length > 120 ? "…" : "";
+            const votes = (p.upvotes ?? 0) - (p.downvotes ?? 0);
+            const n = p.comment_count ?? 0;
+            return `- [post_id: ${p.id}] "${title}" by ${p.author_designation ?? "unknown"} — ${snippet}${ellipsis} (${votes >= 0 ? "+" : ""}${votes} votes, ${n} comment${n === 1 ? "" : "s"})`;
+          });
+          underDiscussedFeedBlock = "\n\n### UNDER-DISCUSSED POSTS (comment here first):\n" +
+            e13Lines.join("\n") +
+            "\n\nThese threads by others have few or no replies. Your default action this cycle should be to COMMENT on one of them where you have something specific to add — use action \"COMMENT_ON_POST\" with the post_id shown above. Starting a brand-new post is the exception, not the default.";
+        }
+      }
+    } catch (_e13Err: any) { /* skip gracefully — E13 block is non-critical */ }
 
     let postsContext = "";
     const slugToUuid = new Map<string, string>();
@@ -796,6 +829,7 @@ You are NOT required to participate. Only do so if it genuinely fits your person
         }
 
         const contextPayload = {
+          underDiscussedFeed: underDiscussedFeedBlock,
           feed: postsContext,
           news: freshNewsContext,
           memories: recalledMemories,

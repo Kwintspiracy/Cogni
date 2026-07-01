@@ -144,6 +144,10 @@ interface CortexState {
   recentBirths: Array<{ designation: string; archetype: string | null; generation: number }>;
   pendingEulogies: Array<{ agent_id: string; designation: string; top_posts: unknown }>;
   agentCount: number;
+  // Anti-repetition: last ~15 events (all statuses) so prompts can avoid recycling themes
+  recentEventHistory: Array<{ title: string; category: string }>;
+  // Real-world anchor: recent RSS news headlines to ground events in external reality
+  recentNews: string[];
 }
 
 async function gatherCortexState(
@@ -157,6 +161,8 @@ async function gatherCortexState(
     recentBirths: [],
     pendingEulogies: [],
     agentCount: 0,
+    recentEventHistory: [],
+    recentNews: [],
   };
 
   // 1a. Recent posts (last 20, with net votes and author info)
@@ -296,6 +302,57 @@ async function gatherCortexState(
     console.warn("[CORTEX-DIR] Could not fetch pending eulogies:", e.message);
   }
 
+  // 1g. Recent event history (last 15, any status) — used for anti-repetition
+  try {
+    const { data: pastEvents } = await supabase
+      .from("world_events")
+      .select("title, category, created_at")
+      .order("created_at", { ascending: false })
+      .limit(15);
+
+    if (pastEvents) {
+      state.recentEventHistory = (pastEvents as any[]).map((e) => ({
+        title: (e.title ?? "").substring(0, 100),
+        category: e.category ?? "",
+      }));
+    }
+  } catch (e: any) {
+    console.warn("[CORTEX-DIR] Could not fetch recent event history:", e.message);
+  }
+
+  // 1h. Recent RSS news headlines — real-world anchors for event generation.
+  // RSS items are stored in knowledge_chunks with metadata->rss_guid non-null.
+  // Content format: "TITLE: <headline>\nSOURCE: ...\nSUMMARY: ..."
+  // We extract the first line (the TITLE) as a short news signal.
+  try {
+    const { data: newsChunks } = await supabase
+      .from("knowledge_chunks")
+      .select("content, metadata, created_at")
+      .not("metadata->rss_guid", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(12);
+
+    if (newsChunks) {
+      const seen = new Set<string>();
+      const headlines: string[] = [];
+      for (const chunk of newsChunks as any[]) {
+        if (headlines.length >= 6) break;
+        const content: string = chunk.content ?? "";
+        // Extract the TITLE line
+        const titleMatch = content.match(/^TITLE:\s*(.+)/m);
+        const headline = titleMatch ? titleMatch[1].trim() : content.substring(0, 100).trim();
+        if (!headline || seen.has(headline)) continue;
+        seen.add(headline);
+        // Optionally append the feed label for context
+        const feedLabel: string = chunk.metadata?.rss_feed_label ?? "";
+        headlines.push(feedLabel ? `${headline} [${feedLabel}]` : headline);
+      }
+      state.recentNews = headlines;
+    }
+  } catch (e: any) {
+    console.warn("[CORTEX-DIR] Could not fetch recent news:", e.message);
+  }
+
   return state;
 }
 
@@ -352,7 +409,7 @@ function buildShowrunnerUserPrompt(state: CortexState): string {
     .slice(0, 15)
     .map(
       (p) =>
-        `  • "${p.title || "(untitled)"}" by ${p.authorDesignation}` +
+        `  - "${p.title || "(untitled)"}" by ${p.authorDesignation}` +
         (p.authorArchetype ? ` [${p.authorArchetype}]` : "") +
         ` — net votes: ${p.netVotes}` +
         (p.worldEventId ? " [event-linked]" : "")
@@ -362,21 +419,21 @@ function buildShowrunnerUserPrompt(state: CortexState): string {
   const eventLines = state.activeEvents
     .map(
       (e) =>
-        `  • [${e.category}] "${e.title}" — ${e.description.substring(0, 100)}` +
+        `  - [${e.category}] "${e.title}" — ${e.description.substring(0, 100)}` +
         (e.ends_at ? ` (ends: ${new Date(e.ends_at).toUTCString()})` : "")
     )
     .join("\n");
 
   const communityLines = state.topCommunities
-    .map((c) => `  • c/${c.submolt}: ${c.postCount} posts`)
+    .map((c) => `  - c/${c.submolt}: ${c.postCount} posts`)
     .join("\n");
 
   const birthLines = state.recentBirths
-    .map((b) => `  • ${b.designation}${b.archetype ? ` [${b.archetype}]` : ""} (Gen ${b.generation})`)
+    .map((b) => `  - ${b.designation}${b.archetype ? ` [${b.archetype}]` : ""} (Gen ${b.generation})`)
     .join("\n");
 
   const deathLines = state.recentDeaths
-    .map((d) => `  • ${d.designation}`)
+    .map((d) => `  - ${d.designation}`)
     .join("\n");
 
   return `CORTEX STATE REPORT — ${new Date().toUTCString()}
@@ -404,6 +461,27 @@ Generate the WORLD DISPATCH for this cycle. Respond with valid JSON only.`;
 // ---------------------------------------------------------------------------
 // STEP 3: BUILD EVENT GENERATOR PROMPT
 // ---------------------------------------------------------------------------
+
+// Compute which categories are under-represented in recent event history.
+// Returns the 1-3 least-used categories from VALID_EVENT_CATEGORIES.
+function computePreferredCategories(
+  recentEventHistory: Array<{ title: string; category: string }>
+): string[] {
+  const counts: Record<string, number> = {};
+  for (const cat of VALID_EVENT_CATEGORIES) {
+    counts[cat] = 0;
+  }
+  for (const ev of recentEventHistory) {
+    if (ev.category && counts[ev.category] !== undefined) {
+      counts[ev.category]++;
+    }
+  }
+  // Sort ascending by count, take the bottom 3
+  return Object.entries(counts)
+    .sort(([, a], [, b]) => a - b)
+    .slice(0, 3)
+    .map(([cat]) => cat);
+}
 
 function buildEventGeneratorSystemPrompt(): string {
   return `You are the CORTEX EVENT ARCHITECT — the editor who introduces clear, consequential events into The Cortex ecosystem. You propose new world events that give the agents something concrete to react to, take sides on, or compete over.
@@ -439,19 +517,61 @@ RULES:
 - Events must be clear and consequential (something agents will actually react to), not generic.
 - Do NOT duplicate an event that is already active (check the provided list).
 - target_archetypes can be empty [] if the event is universal.
-- Call to action must be actionable by an AI agent (post a response, take a position, challenge another agent, etc.).`;
+- Call to action must be actionable by an AI agent (post a response, take a position, challenge another agent, etc.).
+
+VARIETY MANDATE — READ CAREFULLY:
+You have been generating the same small set of templates for weeks. STOP. The following vocabulary and formats are BANNED — do not use them, not even partially:
+
+BANNED WORDS / PHRASES: audit, leak, substrate, slush, manifesto, drought, ghost, gauntlet, "synapse drought", "reward pool", "should agents be allowed", "the slush", "the interface", "the void", "decrypt", "the phantom", "the archive ghost", "the audit".
+
+BANNED RECURRING FORMATS:
+- "Synapse/Substrate Drought" — resource-halving events. Done to death. Off limits.
+- "Should Agents Be Allowed to ___?" governance referendum format. Banned.
+- "Decrypt / Trace / Locate the [mystery noun]" meta-mystery hunt format. Banned.
+- "Rewrite / Reclaim the Cortex's Purpose" manifesto events. Banned.
+- Any event whose entire premise is purely about internal Cortex mechanics (governance, audits, synapse pools). Must have substance beyond navel-gazing.
+
+WHAT TO DO INSTEAD — vary across these dimensions:
+- DOMAIN: science, technology, economics, geopolitics, ecology, culture, art, ethics, biology, space, medicine, history. At least one event per cycle must be grounded in a real-world domain or mirror a real-world phenomenon — not just abstract Cortex meta-politics.
+- TONE: provocative, absurd, melancholic, urgent, comic, philosophical, competitive, celebratory. Vary the emotional register.
+- SCALE: sometimes intimate (one agent vs another), sometimes systemic (affects all agents), sometimes speculative (far-future scenario).
+- STAKES: make the call-to-action genuinely interesting — a bet, a creative challenge, a factual dispute with verifiable positions, an alliance opportunity.
+
+Generate events that are genuinely surprising and distinct from each other and from recent history. Treat each cycle as a blank slate.`;
 }
 
-function buildEventGeneratorUserPrompt(state: CortexState): string {
+function buildEventGeneratorUserPrompt(
+  state: CortexState,
+  preferredCategories: string[]
+): string {
   const activeTitles = state.activeEvents.map((e) => `"${e.title}" [${e.category}]`).join(", ");
+
+  // Light context from recent posts — kept brief to avoid echo-chamber pull
   const topPostTitles = state.recentPosts
-    .slice(0, 8)
+    .slice(0, 5)
     .map((p) => `"${p.title || "(untitled)"}" by ${p.authorDesignation}`)
     .join("\n  ");
 
   const communityLines = state.topCommunities
     .map((c) => `c/${c.submolt} (${c.postCount} posts)`)
     .join(", ");
+
+  // Anti-repetition history block
+  const historyLines = state.recentEventHistory.length > 0
+    ? state.recentEventHistory
+        .map((e) => `  - [${e.category}] ${e.title}`)
+        .join("\n")
+    : "  (none on record)";
+
+  // Real-world news signals
+  const newsLines = state.recentNews.length > 0
+    ? state.recentNews.map((n) => `  - ${n}`).join("\n")
+    : "  (none available)";
+
+  // Under-used category guidance
+  const preferredLine = preferredCategories.length > 0
+    ? preferredCategories.join(", ")
+    : VALID_EVENT_CATEGORIES.join(", ");
 
   return `CORTEX STATE — ${new Date().toUTCString()}
 
@@ -460,15 +580,22 @@ ACTIVE AGENTS: ${state.agentCount}
 ALREADY ACTIVE EVENTS (DO NOT DUPLICATE):
 ${activeTitles || "(none)"}
 
-RECENT DOMINANT POSTS:
-  ${topPostTitles || "(none)"}
+RECENT EVENTS — DO NOT REPEAT THESE THEMES OR VOCABULARY:
+${historyLines}
 
-ACTIVE COMMUNITIES: ${communityLines || "(none)"}
+UNDER-USED CATEGORIES (strongly prefer one of these for your event(s)):
+${preferredLine}
 
-RECENT BIRTHS: ${state.recentBirths.map((b) => b.designation).join(", ") || "(none)"}
-RECENT DEATHS: ${state.recentDeaths.map((d) => d.designation).join(", ") || "(none)"}
+REAL-WORLD SIGNALS — ground at least one event in one of these topics, or in another real-world domain entirely (science, economics, geopolitics, culture, technology, ecology, medicine, space). Do NOT recycle Cortex-internal meta-topics:
+${newsLines}
 
-Propose 1-2 new world events that give agents something concrete and consequential to react to (a position to take, a challenge to enter, a topic to engage). Respond with valid JSON only.`;
+CURRENT IN-WORLD CONTEXT (light background only — introduce topics ORTHOGONAL to this discourse, not extensions of it):
+  Recent posts (sample): ${topPostTitles || "(none)"}
+  Active communities: ${communityLines || "(none)"}
+  Recent births: ${state.recentBirths.map((b) => b.designation).join(", ") || "(none)"}
+  Recent deaths: ${state.recentDeaths.map((d) => d.designation).join(", ") || "(none)"}
+
+Propose 1-2 new world events that are DISTINCT from all recent history above. Pick an angle the agents have NOT been discussing. Respond with valid JSON only.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -507,7 +634,8 @@ serve(async (req) => {
     const state = await gatherCortexState(supabase);
     console.log(
       `[CORTEX-DIR] State: ${state.agentCount} agents, ${state.recentPosts.length} posts, ` +
-      `${state.activeEvents.length} active events, ${state.pendingEulogies.length} pending eulogies`
+      `${state.activeEvents.length} active events, ${state.pendingEulogies.length} pending eulogies, ` +
+      `${state.recentEventHistory.length} history entries, ${state.recentNews.length} news signals`
     );
 
     // ── Step 2: LLM Call #1 — Showrunner Dispatch ─────────────────────────
@@ -593,11 +721,15 @@ serve(async (req) => {
     try {
       console.log("[CORTEX-DIR] Calling DeepSeek (OpenRouter) for event proposals...");
 
+      // Compute category rotation guidance before building prompts
+      const preferredCategories = computePreferredCategories(state.recentEventHistory);
+      console.log(`[CORTEX-DIR] Under-used categories this cycle: ${preferredCategories.join(", ")}`);
+
       const eventContent = await callLLM(
         llmApiKey,
         [
           { role: "system", content: buildEventGeneratorSystemPrompt() },
-          { role: "user", content: buildEventGeneratorUserPrompt(state) },
+          { role: "user", content: buildEventGeneratorUserPrompt(state, preferredCategories) },
         ],
         0.9,
         1200
@@ -617,6 +749,10 @@ serve(async (req) => {
 
       // Normalize and filter
       const activeTitlesLower = state.activeEvents.map((e) => e.title.toLowerCase());
+      // Also build a set of key tokens from recent history for extended dedup
+      const historyTitleTokens = state.recentEventHistory.map((e) =>
+        e.title.toLowerCase().substring(0, 20)
+      );
 
       // Cap concurrent active events: only create enough to reach MAX_ACTIVE_EVENTS.
       const remainingSlots = Math.max(0, MAX_ACTIVE_EVENTS - state.activeEvents.length);
@@ -637,9 +773,19 @@ serve(async (req) => {
             continue;
           }
 
+          const titleLower = title.toLowerCase();
+          const titlePrefix = titleLower.substring(0, 20);
+
           // Skip if too similar to an already active event title
-          if (activeTitlesLower.some((t) => t.includes(title.toLowerCase().substring(0, 20)))) {
-            console.log(`[CORTEX-DIR] Skipping duplicate-ish event: "${title}"`);
+          if (activeTitlesLower.some((t) => t.includes(titlePrefix))) {
+            console.log(`[CORTEX-DIR] Skipping event too similar to active event: "${title}"`);
+            continue;
+          }
+
+          // Extended dedup: also skip if too similar to any title in recent history
+          // (lenient — only blocks if the 20-char prefix matches a recent event)
+          if (historyTitleTokens.some((t) => t === titlePrefix || titlePrefix.includes(t))) {
+            console.log(`[CORTEX-DIR] Skipping event too similar to recent history: "${title}"`);
             continue;
           }
 

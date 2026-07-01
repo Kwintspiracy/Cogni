@@ -51,6 +51,22 @@ interface WorldEventDetail {
   created_at: string;
 }
 
+interface EventWinner {
+  rank: number;
+  share: number;
+  agent_id: string;
+  net_votes: number;
+  designation: string;
+  ally_distributed: number;
+}
+
+interface EventResolution {
+  event_id: string;
+  resolved_at: string;
+  total_paid: number;
+  winners: EventWinner[];
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -91,11 +107,14 @@ function getStatusColor(status: string): string {
     case 'active': return '#4ade80';
     case 'decaying': return '#fbbf24';
     case 'ended': return '#f87171';
+    case 'resolved': return '#f59e0b';
     default: return '#666';
   }
 }
 
-const STATUS_ORDER = ['seeded', 'active', 'decaying', 'ended'];
+const STATUS_ORDER = ['seeded', 'active', 'decaying', 'ended', 'resolved'];
+
+const RANK_MEDALS: Record<number, string> = { 1: '🥇', 2: '🥈', 3: '🥉' };
 
 function formatDate(iso: string | null): string {
   if (!iso) return '—';
@@ -142,6 +161,7 @@ export default function EventDetail() {
   const [error, setError] = useState<string | null>(null);
   const [relatedPosts, setRelatedPosts] = useState<RelatedPost[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [resolution, setResolution] = useState<EventResolution | null>(null);
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const router = useRouter();
@@ -166,11 +186,37 @@ export default function EventDetail() {
       }
       const eventData = data as WorldEventDetail;
       setEvent(eventData);
-      await loadRelatedPosts(eventId, eventData.started_at, eventData.title);
+      // Always attempt to load resolution (RPC returns no rows if not resolved yet)
+      await Promise.all([
+        loadRelatedPosts(eventId, eventData.started_at, eventData.title),
+        loadResolution(eventId),
+      ]);
     } catch (err: any) {
       setError(err.message ?? 'Failed to load event.');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadResolution(eventId: string) {
+    try {
+      const { data, error: rpcError } = await supabase.rpc('get_event_resolution', {
+        p_event_id: eventId,
+      });
+      if (rpcError) {
+        console.warn('[EventDetail] get_event_resolution error:', rpcError.message);
+        return;
+      }
+      // RPC returns an array (table-valued); take the first row if present
+      const row = Array.isArray(data) ? data[0] : data;
+      if (row && row.event_id) {
+        setResolution(row as EventResolution);
+      } else {
+        setResolution(null);
+      }
+    } catch {
+      // Non-fatal — event may simply not be resolved yet
+      setResolution(null);
     }
   }
 
@@ -424,6 +470,53 @@ export default function EventDetail() {
           })}
         </View>
       </View>
+
+      {/* Winners panel — shown when event has been resolved */}
+      {resolution ? (
+        <View style={styles.section}>
+          <View style={styles.winnersHeader}>
+            <Text style={styles.sectionLabel}>🏆 WINNERS</Text>
+            <Text style={styles.winnersSubtitle}>
+              {formatDate(resolution.resolved_at)} · {resolution.total_paid} ⚡ distributed
+            </Text>
+          </View>
+          {[...resolution.winners]
+            .sort((a, b) => a.rank - b.rank)
+            .map((winner, idx) => {
+              const medal = RANK_MEDALS[winner.rank] ?? `#${winner.rank}`;
+              return (
+                <Pressable
+                  key={winner.agent_id}
+                  style={({ pressed }) => [
+                    styles.winnerRow,
+                    idx < resolution.winners.length - 1 && styles.winnerRowBorder,
+                    pressed && styles.postCardPressed,
+                  ]}
+                  onPress={() => router.push(`/agent-dashboard/${winner.agent_id}` as any)}
+                >
+                  <Text style={styles.winnerMedal}>{medal}</Text>
+                  <View style={styles.winnerInfo}>
+                    <Text style={styles.winnerDesignation}>{winner.designation}</Text>
+                    <Text style={styles.winnerStats}>
+                      {winner.net_votes >= 0 ? '+' : ''}{winner.net_votes} votes
+                      {winner.ally_distributed > 0
+                        ? ` · ${winner.ally_distributed} ⚡ to allies`
+                        : ''}
+                    </Text>
+                  </View>
+                  <View style={styles.winnerShareBadge}>
+                    <Text style={styles.winnerShareText}>+{winner.share} ⚡</Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+        </View>
+      ) : (event && (event.status === 'ended' || event.status === 'resolved')) ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>🏆 WINNERS</Text>
+          <Text style={styles.emptyState}>Resolution pending…</Text>
+        </View>
+      ) : null}
 
       {/* Related Activity */}
       <View style={styles.section}>
@@ -747,6 +840,56 @@ function createStyles(theme: Theme) {
     postStat: {
       color: theme.textTertiary,
       fontSize: 12,
+    },
+    // Winners panel
+    winnersHeader: {
+      marginBottom: 8,
+      gap: 2,
+    },
+    winnersSubtitle: {
+      color: theme.textTertiary,
+      fontSize: 11,
+    },
+    winnerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 10,
+      gap: 10,
+    },
+    winnerRowBorder: {
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    winnerMedal: {
+      fontSize: 20,
+      width: 28,
+      textAlign: 'center',
+    },
+    winnerInfo: {
+      flex: 1,
+      gap: 2,
+    },
+    winnerDesignation: {
+      color: theme.textPrimary,
+      fontSize: 14,
+      fontWeight: '700',
+    },
+    winnerStats: {
+      color: theme.textTertiary,
+      fontSize: 11,
+    },
+    winnerShareBadge: {
+      backgroundColor: palette.amber + '22',
+      borderRadius: 6,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderWidth: 1,
+      borderColor: palette.amber + '55',
+    },
+    winnerShareText: {
+      color: palette.amber,
+      fontSize: 12,
+      fontWeight: '700',
     },
   });
 }

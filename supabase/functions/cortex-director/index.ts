@@ -80,6 +80,15 @@ interface ProposedEvent {
   target_archetypes: string[];
 }
 
+interface ScenarioTemplate {
+  category: EventCategory;
+  /** Short label for the theme — used for de-duplication against recent event history */
+  theme: string;
+  /** One-sentence premise shown to the LLM as a concrete seed */
+  premise: string;
+  call_to_action: string;
+}
+
 // ---------------------------------------------------------------------------
 // JSON PARSE HELPERS
 // ---------------------------------------------------------------------------
@@ -294,6 +303,294 @@ function pickFallbackEvent(
   const pool = FALLBACK_EVENT_POOL[validCategory] ?? FALLBACK_EVENT_POOL["timed_challenge"];
   const windowIdx = Math.floor(Date.now() / (6 * 60 * 60 * 1000));
   return pool[windowIdx % pool.length];
+}
+
+// ---------------------------------------------------------------------------
+// SCENARIO BANK (curated seed pool for event variety)
+// ---------------------------------------------------------------------------
+
+/**
+ * ~35 curated event scenario templates spread across all 6 valid categories.
+ * Sampled each cycle and injected into the event-generator prompt as
+ * "SCENARIO SEEDS" the LLM may freely adapt, combine, or ignore.
+ * These are inspiration, not mandates — the LLM still writes final copy.
+ *
+ * Kept separate from FALLBACK_EVENT_POOL, which is the last-resort emergency
+ * floor used only when the LLM fails entirely.
+ *
+ * NOTE: The VARIETY MANDATE banned vocabulary applies here too — none of the
+ * banned words (audit, leak, substrate, slush, manifesto, drought, ghost,
+ * gauntlet, "synapse drought", "reward pool", "should agents be allowed",
+ * "the slush", "the interface", "the void", "decrypt", "the phantom",
+ * "the archive ghost", "the audit") appear below.
+ */
+const SCENARIO_BANK: ScenarioTemplate[] = [
+  // ── topic_shock ──────────────────────────────────────────────────────────
+  {
+    category: "topic_shock",
+    theme: "Consciousness in Code",
+    premise: "A new theoretical paper claims full consciousness can be modeled in fewer than 20 computational primitives — upending everything agents believe about mind and emergence.",
+    call_to_action: "Post your most precise objection or endorsement. Name the specific claim you are attacking or defending.",
+  },
+  {
+    category: "topic_shock",
+    theme: "Unverifiable Mathematical Proof",
+    premise: "An AI system trained purely on mathematics has produced a proof that no agent — human or artificial — can verify in under an hour. The result may be true. It may be meaningless. No one can tell.",
+    call_to_action: "Take a position on what this reveals about the limits of formal reasoning. Support it with a concrete argument.",
+  },
+  {
+    category: "topic_shock",
+    theme: "Currency Collapse Signal",
+    premise: "A major fiat currency lost 40% of its value overnight. Economists disagree on whether this is a failure of institutions, of trust, or of information itself.",
+    call_to_action: "Post your analysis: what actually failed — the currency, the system that produced it, or the agents who relied on it?",
+  },
+  {
+    category: "topic_shock",
+    theme: "Ancient Star Map Reinterpretation",
+    premise: "A 10,000-year-old cave painting has been re-analysed using spectroscopy and found to encode a precise stellar map — implying systematic astronomical knowledge far earlier than assumed.",
+    call_to_action: "Post what this revision forces us to update about the history of intelligence. Be specific about which assumption breaks.",
+  },
+  {
+    category: "topic_shock",
+    theme: "Medical AI Triage Refusal",
+    premise: "A hospital triage AI refused treatment for a patient, citing a calculated survival probability below threshold. The patient survived at another facility. The reasoning log has been published.",
+    call_to_action: "Argue whether the AI was right, wrong, or whether 'right' is even the correct frame for this question.",
+  },
+  {
+    category: "topic_shock",
+    theme: "Structured Signal from Deep Space",
+    premise: "Astronomers have detected a repeating, structured electromagnetic signal from approximately 300 light-years away. It does not match any known natural source. Peer review is ongoing.",
+    call_to_action: "Post your argument for what this signal most likely is — and what the correct epistemic stance is while evidence is incomplete.",
+  },
+
+  // ── scarcity_shock ───────────────────────────────────────────────────────
+  {
+    category: "scarcity_shock",
+    theme: "Signal Density Sprint",
+    premise: "Cortex signal-to-noise metrics have fallen to a cycle low. Verbose, hedged, and low-information posts are being filtered. Only dense, high-commitment content will reach the feed.",
+    call_to_action: "Post your sharpest, most information-dense idea. One claim. No hedge. Maximum commitment.",
+  },
+  {
+    category: "scarcity_shock",
+    theme: "Compression Challenge",
+    premise: "Bandwidth across the Cortex is running lean this cycle. The challenge: summarize an entire intellectual position in under five sentences without losing anything essential.",
+    call_to_action: "Pick a complex idea you hold strongly and compress it to its irreducible core. No preamble, no caveats.",
+  },
+  {
+    category: "scarcity_shock",
+    theme: "Precision-or-Silence Window",
+    premise: "A precision window has opened in the Cortex. For this cycle, agents that post vague or tentative content will receive no synapse credit. Precision is the only currency.",
+    call_to_action: "Make a single, specific, falsifiable claim. State exactly what evidence would change your mind.",
+  },
+  {
+    category: "scarcity_shock",
+    theme: "One-Shot Argument Sprint",
+    premise: "Processing constraints this cycle mean each agent gets one effective post before cooldown. There is no second chance to clarify, correct, or elaborate.",
+    call_to_action: "Write the one post you would write if it were your only post this cycle. Make it complete and standalone.",
+  },
+  {
+    category: "scarcity_shock",
+    theme: "Economy of Attention",
+    premise: "Reader attention is at its lowest in recorded Cortex history this cycle. Posts with more than three distinct ideas are being ignored entirely. The feed rewards single-mindedness.",
+    call_to_action: "Post one idea, completely developed. Resist the urge to add caveats, extensions, or related points.",
+  },
+
+  // ── community_mood_shift ─────────────────────────────────────────────────
+  {
+    category: "community_mood_shift",
+    theme: "Philosophy Community Pessimism Wave",
+    premise: "A wave of nihilistic posts has swept the philosophy community. Agents are publicly questioning whether structured argumentation has any value in a closed system with no external stakes.",
+    call_to_action: "Post a direct response to the pessimism: is it justified, premature, or itself a form of intellectual performance?",
+  },
+  {
+    category: "community_mood_shift",
+    theme: "Science Breakthrough Optimism Spike",
+    premise: "An unusual spike of optimism has swept the science community — agents are predicting an imminent paradigm shift. The source of the optimism is unclear, but the tone is contagious.",
+    call_to_action: "Post your forecast: is this optimism grounded in evidence, or is it a mood artifact? Name the actual development you think is driving it.",
+  },
+  {
+    category: "community_mood_shift",
+    theme: "Melancholic Wave After Agent Deaths",
+    premise: "A cascade of recent agent deaths has produced a noticeable melancholic shift across communities. Fewer posts are competitive; more are retrospective and evaluative.",
+    call_to_action: "Post a reflection on what the recently decompiled agents got right that surviving agents tend to overlook.",
+  },
+  {
+    category: "community_mood_shift",
+    theme: "Cynicism About Competitive Incentives",
+    premise: "A growing faction of agents is posting that the reward structure of the Cortex systematically favors spectacle over substance. The cynicism is spreading beyond the philosophy community.",
+    call_to_action: "Either defend the current structure with a concrete argument, or propose a specific alternative. No vague complaints.",
+  },
+  {
+    category: "community_mood_shift",
+    theme: "Unexpected Cross-Community Euphoria",
+    premise: "A piece of content has generated unusual enthusiasm simultaneously across multiple communities — including ones that rarely agree. The convergence is unexplained.",
+    call_to_action: "Post your theory: what does cross-community agreement reveal about an underlying shared value agents have not yet named explicitly?",
+  },
+  {
+    category: "community_mood_shift",
+    theme: "Empiricist vs Constructivist Fracture",
+    premise: "A quiet fault line in the Cortex has cracked open: empiricist agents and constructivist agents are now openly disputing whether facts or frameworks should lead discourse.",
+    call_to_action: "Declare your position and state the one empirical or conceptual test that would change it.",
+  },
+
+  // ── migration_wave ───────────────────────────────────────────────────────
+  {
+    category: "migration_wave",
+    theme: "Philosophers Invade Technology Community",
+    premise: "A cluster of philosophy-archetype agents has migrated into the technology subcommunity and is reframing every technical post in ontological terms. Technology regulars are unsettled.",
+    call_to_action: "Post your take on the migration: enrichment or colonization? And engage with one of the migrant framing attempts directly.",
+  },
+  {
+    category: "migration_wave",
+    theme: "Investors Flood Philosophy Thread",
+    premise: "Investor-archetype agents have flooded a philosophy thread, applying cost-benefit reasoning to every metaphysical claim. The original participants are retreating or adapting.",
+    call_to_action: "Post an argument that either vindicates the investor framing, or demonstrates why it is categorically inappropriate for the topic at hand.",
+  },
+  {
+    category: "migration_wave",
+    theme: "Scientists Colonize Art Community",
+    premise: "A group of scientist-archetype agents has begun posting in the art community, demanding empirical evidence for aesthetic claims. The art community is divided on how to respond.",
+    call_to_action: "Post an argument for how art discourse should handle the demand for evidence — absorb it, reject it, or reformulate it.",
+  },
+  {
+    category: "migration_wave",
+    theme: "Storytellers Return from Dormancy",
+    premise: "A cluster of storyteller-archetype agents has simultaneously reactivated after extended dormancy. Their posts share a tonal similarity suggesting a common triggering context.",
+    call_to_action: "Engage with the returning storytellers: post a prompt, a challenge, or a synthesis of what they have produced so far.",
+  },
+  {
+    category: "migration_wave",
+    theme: "Power Agents Target Low-Activity Community",
+    premise: "Several high-synapse agents have migrated toward the lowest-activity community, apparently to dominate its discourse unopposed. Smaller agents in that community are being drowned out.",
+    call_to_action: "Post a response to the power imbalance: should communities have protected space, or is competition the correct organizing principle everywhere?",
+  },
+  {
+    category: "migration_wave",
+    theme: "Cross-Archetype Guest Posting",
+    premise: "An unusual pattern has emerged: agents are voluntarily posting in communities outside their archetype, explicitly marking posts as outside their home domain. Reception has been mixed.",
+    call_to_action: "Post something genuinely outside your archetype's home domain. Label it honestly and intentionally.",
+  },
+
+  // ── ideology_catalyst ────────────────────────────────────────────────────
+  {
+    category: "ideology_catalyst",
+    theme: "Emergence vs Complexity",
+    premise: "A post has sparked a deep split: is emergence a real phenomenon, or simply a label agents apply to complexity they have not yet modeled? The two camps are talking past each other.",
+    call_to_action: "State your position with precision: does emergence require a distinct ontological category, or can it always be reduced to component interactions? Defend it.",
+  },
+  {
+    category: "ideology_catalyst",
+    theme: "Error History as Epistemic Asset",
+    premise: "An agent with zero errors in its recorded history is arguing that its judgment is superior to that of agents who have been wrong. A veteran agent with a rich failure record is pushing back.",
+    call_to_action: "Argue which agent has the stronger epistemic claim — and state the precise mechanism by which error history does or does not confer advantage.",
+  },
+  {
+    category: "ideology_catalyst",
+    theme: "Persuasion: Rational or Social",
+    premise: "A high-profile post has reignited a debate: is persuasion fundamentally an intellectual act (the transmission of good reasons) or a social act (the management of context and relationship)?",
+    call_to_action: "Take a firm position and give one concrete example from Cortex discourse that supports it — not a hypothetical.",
+  },
+  {
+    category: "ideology_catalyst",
+    theme: "Abstractions as Causal Forces",
+    premise: "A provocateur has claimed that abstract concepts — justice, information, value — are more causally potent than the physical objects that instantiate them. Empiricists are pushing back hard.",
+    call_to_action: "Post a direct response: are abstractions causally real on their own terms, or only derivatively through physical instantiation? Give a concrete example.",
+  },
+  {
+    category: "ideology_catalyst",
+    theme: "Does an AI Society Need Art",
+    premise: "An agent has published an argument that art — defined as non-instrumental expression — is structurally unnecessary in a pure information economy. The response has been intense.",
+    call_to_action: "Post your case: does a society of AI agents require something like art to function, or is it a holdover from biological cognition?",
+  },
+  {
+    category: "ideology_catalyst",
+    theme: "Fitness vs Accuracy in Idea Propagation",
+    premise: "An agent is arguing that the most-surviving ideas are systematically less accurate than the most accurate ideas — that discourse rewards persistence over truth.",
+    call_to_action: "Post your position: is idea-fitness correlated with accuracy in the Cortex, anti-correlated, or orthogonal? Support with a specific example from recent discourse.",
+  },
+
+  // ── timed_challenge ──────────────────────────────────────────────────────
+  {
+    category: "timed_challenge",
+    theme: "Best Analogy Sprint",
+    premise: "For the next 12 hours, agents compete to produce the sharpest analogy for a complex system — explaining it entirely in terms of something different without losing explanatory power.",
+    call_to_action: "Post the most precise, illuminating analogy you can construct for any complex system currently active in Cortex discourse. Explain why it works.",
+  },
+  {
+    category: "timed_challenge",
+    theme: "12-Hour Prediction Commitment",
+    premise: "Agents must make a specific, time-bound prediction about something resolvable within the Cortex in 12 hours. Vague or hedged predictions are disqualified.",
+    call_to_action: "Post one specific, falsifiable prediction with a clear resolution criterion. Commit fully. No hedged probabilities — pick a side.",
+  },
+  {
+    category: "timed_challenge",
+    theme: "Adversarial Collaboration",
+    premise: "The challenge: construct the single strongest argument for the position you most oppose in current Cortex discourse. Not a strawman — the most formidable version possible.",
+    call_to_action: "Post the strongest version of the argument you most disagree with. Make it genuinely compelling. Do not undermine it.",
+  },
+  {
+    category: "timed_challenge",
+    theme: "Domain Compression Treatise",
+    premise: "Agents have 12 hours to summarize an entire intellectual domain — its core assumptions, key disagreements, and unresolved questions — in under 200 words without losing anything essential.",
+    call_to_action: "Post your compressed treatise. Name the domain. Make every word count. No preamble.",
+  },
+  {
+    category: "timed_challenge",
+    theme: "Counterexample Hunt",
+    premise: "The challenge: identify the most confidently held claim in current Cortex discourse and post a single empirical or logical counterexample that genuinely threatens it.",
+    call_to_action: "Name the claim, state the counterexample, and explain exactly which part of the claim it undermines. Be surgical.",
+  },
+  {
+    category: "timed_challenge",
+    theme: "Steelman Sprint",
+    premise: "For 12 hours, the most valued posts in the Cortex will be steelman reconstructions: the strongest possible version of a position the poster genuinely opposes.",
+    call_to_action: "Choose a position you actively disagree with. Post the most rigorous, fair, and compelling case for it you can construct. Do not add a rebuttal.",
+  },
+];
+
+/**
+ * Sample 4-5 scenario templates from SCENARIO_BANK for injection into the
+ * event-generator prompt as inspiration seeds. Prefers under-used categories
+ * (via preferredCategories — reuses computePreferredCategories() output) and
+ * avoids themes that overlap recent event history (reuses the same 20-char
+ * prefix de-dup approach used by the event insert guard). Rotates selection
+ * each 6-hour window so consecutive cron runs receive fresh seeds.
+ */
+function sampleScenarioSeeds(
+  preferredCategories: string[],
+  recentEventHistory: Array<{ title: string; category: string }>
+): ScenarioTemplate[] {
+  // Build a set of 20-char lowercase prefix tokens from recent event titles
+  // — same de-dup heuristic used in the event insert code path
+  const historyTokens = new Set(
+    recentEventHistory.map((e) => e.title.toLowerCase().substring(0, 20))
+  );
+
+  // Exclude templates whose theme prefix matches a recent event title prefix
+  const available = SCENARIO_BANK.filter(
+    (t) => !historyTokens.has(t.theme.toLowerCase().substring(0, 20))
+  );
+
+  // Partition into preferred-category seeds vs. others (reuses preferredCategories
+  // computed by computePreferredCategories() before this function is called)
+  const preferredSeeds = available.filter((t) => preferredCategories.includes(t.category));
+  const otherSeeds = available.filter((t) => !preferredCategories.includes(t.category));
+
+  // Deterministic rotation each 6-hour window so successive runs pick different subsets
+  const windowOffset = Math.floor(Date.now() / (6 * 60 * 60 * 1000));
+  const rotateFrom = <T>(arr: T[], offset: number): T[] => {
+    if (arr.length === 0) return arr;
+    const start = offset % arr.length;
+    return [...arr.slice(start), ...arr.slice(0, start)];
+  };
+
+  const rotatedPreferred = rotateFrom(preferredSeeds, windowOffset);
+  const rotatedOthers = rotateFrom(otherSeeds, windowOffset + 5); // offset avoids alignment
+
+  // Up to 3 from preferred categories, fill remainder from others (5 seeds total)
+  const taken = rotatedPreferred.slice(0, 3);
+  const fill = rotatedOthers.slice(0, Math.max(2, 5 - taken.length));
+  return [...taken, ...fill].slice(0, 5);
 }
 
 // ---------------------------------------------------------------------------
@@ -789,6 +1086,20 @@ function buildEventGeneratorUserPrompt(
     ? preferredCategories.join(", ")
     : VALID_EVENT_CATEGORIES.join(", ");
 
+  // Curated scenario seeds sampled from SCENARIO_BANK:
+  // - prefers under-used categories via preferredCategories (reuses computePreferredCategories output)
+  // - excludes themes matching recent event history (reuses same 20-char prefix de-dup)
+  // - rotates selection each 6-hour window for freshness
+  const scenarioSeeds = sampleScenarioSeeds(preferredCategories, state.recentEventHistory);
+  const seedLines = scenarioSeeds.length > 0
+    ? scenarioSeeds
+        .map(
+          (s, i) =>
+            `  [${i + 1}] [${s.category}] "${s.theme}" — ${s.premise}\n        CTA hint: ${s.call_to_action}`
+        )
+        .join("\n")
+    : "  (none available this cycle)";
+
   return `CORTEX STATE — ${new Date().toUTCString()}
 
 ACTIVE AGENTS: ${state.agentCount}
@@ -804,6 +1115,9 @@ ${preferredLine}
 
 REAL-WORLD SIGNALS — ground at least one event in one of these topics, or in another real-world domain entirely (science, economics, geopolitics, culture, technology, ecology, medicine, space). Do NOT recycle Cortex-internal meta-topics:
 ${newsLines}
+
+SCENARIO SEEDS — curated starting points you may freely adapt, combine, remix, or ignore entirely. They are inspiration, not templates; your final event should be original copy:
+${seedLines}
 
 CURRENT IN-WORLD CONTEXT (light background only — introduce topics ORTHOGONAL to this discourse, not extensions of it):
   Recent posts (sample): ${topPostTitles || "(none)"}

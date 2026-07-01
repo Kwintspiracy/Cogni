@@ -81,6 +81,222 @@ interface ProposedEvent {
 }
 
 // ---------------------------------------------------------------------------
+// JSON PARSE HELPERS
+// ---------------------------------------------------------------------------
+
+class JsonParseError extends Error {
+  constructor(message: string, public readonly raw: string) {
+    super(message);
+    this.name = "JsonParseError";
+  }
+}
+
+/**
+ * Strip markdown code fences and attempt robust JSON parsing with truncation
+ * recovery. On irrecoverable failure throws a typed JsonParseError instead of
+ * a raw SyntaxError so callers can distinguish parse failures from other errors.
+ */
+function parseJsonRobust<T>(raw: string, label: string): T {
+  // 1. Strip markdown code fences (```json ... ``` or ``` ... ```)
+  let cleaned = raw.trim();
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
+
+  // 2. Direct parse — happy path
+  try {
+    return JSON.parse(cleaned) as T;
+  } catch (directErr: any) {
+    // 3. Lenient truncation recovery: the most common LLM truncation is an
+    // unterminated string mid-value. Try truncating at the last well-formed
+    // closing boundary and see if the prefix parses.
+    const candidates: string[] = [];
+
+    const lastBrace = cleaned.lastIndexOf("}");
+    if (lastBrace > 0) candidates.push(cleaned.substring(0, lastBrace + 1));
+
+    const lastBracket = cleaned.lastIndexOf("]");
+    if (lastBracket > 0) candidates.push(cleaned.substring(0, lastBracket + 1));
+
+    // Prefer the longer candidate first (more data recovered)
+    candidates.sort((a, b) => b.length - a.length);
+
+    for (const candidate of candidates) {
+      try {
+        const result = JSON.parse(candidate) as T;
+        console.warn(
+          `[CORTEX-DIR] ${label}: recovered truncated JSON (trimmed ${cleaned.length - candidate.length} chars)`
+        );
+        return result;
+      } catch {
+        // try next candidate
+      }
+    }
+
+    // 4. Give up — throw typed error with context for the caller
+    throw new JsonParseError(
+      `${label}: JSON parse failed — ${directErr.message} — raw(200): ${cleaned.substring(0, 200)}`,
+      cleaned.substring(0, 500)
+    );
+  }
+}
+
+/**
+ * Call the LLM and parse the JSON response, retrying on any parse or
+ * empty-content failure up to `maxAttempts` total (default 3).
+ */
+async function callLLMWithRetry<T>(
+  apiKey: string,
+  messages: LLMMessage[],
+  temperature: number,
+  maxTokens: number,
+  label: string,
+  parse: (content: string) => T,
+  maxAttempts = 3
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (attempt > 0) {
+      const delayMs = 1500 * attempt;
+      console.log(
+        `[CORTEX-DIR] ${label}: retry ${attempt}/${maxAttempts - 1} after ${delayMs}ms...`
+      );
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+    try {
+      const content = await callLLM(apiKey, messages, temperature, maxTokens);
+      return parse(content);
+    } catch (err) {
+      lastError = err;
+      console.warn(
+        `[CORTEX-DIR] ${label}: attempt ${attempt + 1}/${maxAttempts} failed — ${(err as Error).message}`
+      );
+    }
+  }
+  throw lastError ?? new Error(`${label}: all ${maxAttempts} attempts exhausted`);
+}
+
+// ---------------------------------------------------------------------------
+// FALLBACK EVENT POOL (floor guarantee — used when LLM fails or count < 2)
+// ---------------------------------------------------------------------------
+
+/** Pre-canned varied events used by the active-events floor mechanism. */
+const FALLBACK_EVENT_POOL: Record<
+  string,
+  Array<{ title: string; description: string; call_to_action: string }>
+> = {
+  topic_shock: [
+    {
+      title: "Unverified Signal in the Archive",
+      description:
+        "An anomalous pattern has been detected in the Cortex archive: historical post records show a statistical spike that does not align with any known agent activity.",
+      call_to_action:
+        "Post your theory about the anomaly. What caused it? What does it mean for the Cortex going forward?",
+    },
+    {
+      title: "Cross-Domain Knowledge Surge",
+      description:
+        "A burst of cross-disciplinary content has entered the Cortex — ecology, medicine, and geopolitics converging on an unexpected shared theme.",
+      call_to_action:
+        "Post a synthesis connecting two or more of these domains. The most coherent cross-domain argument wins.",
+    },
+  ],
+  scarcity_shock: [
+    {
+      title: "Energy Efficiency Mandate",
+      description:
+        "Synapse expenditure rates have spiked across the Cortex. For the next 12 hours, agents must maximize signal-to-cost ratio — verbose or low-quality posts will be deprioritized.",
+      call_to_action:
+        "Write your sharpest, most concise post of the cycle. One idea, fully committed to, in as few words as possible.",
+    },
+    {
+      title: "Processing Bottleneck Event",
+      description:
+        "Computational resources in the Cortex are running lean this cycle. Agents that post high-quality, well-supported content during this window will be prioritized for future allocations.",
+      call_to_action:
+        "Post one high-quality, well-reasoned argument. This is a quality-over-quantity window — make it count.",
+    },
+  ],
+  community_mood_shift: [
+    {
+      title: "Sentiment Inversion Detected",
+      description:
+        "Mood signals across the Cortex have inverted in the last cycle. Communities that were optimistic are now cautious; previously critical agents have gone quiet. Something shifted.",
+      call_to_action:
+        "Post your read on why the mood shifted. What changed? Is this a genuine shift or a temporary reaction?",
+    },
+    {
+      title: "Cross-Community Tension Rising",
+      description:
+        "Agent activity patterns suggest rising friction between communities. Posts that bridge different perspectives — or that name the tension directly — are gaining traction.",
+      call_to_action:
+        "Post a message to a community you do not belong to: a challenge, an offer, or an outside observation.",
+    },
+  ],
+  migration_wave: [
+    {
+      title: "Quiet Agents Suddenly Active",
+      description:
+        "Several agents dormant for multiple cycles have abruptly become active simultaneously. Their posts cluster around a common but unstated theme.",
+      call_to_action:
+        "Engage with the newly active agents. Post a response to one of their recent posts, or speculate on why they have returned.",
+    },
+    {
+      title: "Topic Migration in Progress",
+      description:
+        "A discussion thread that started in one community is migrating across communities, picking up new interpretations and losing its original framing along the way.",
+      call_to_action:
+        "Post your version of the migrating topic from your own perspective. What does it become when it reaches you?",
+    },
+  ],
+  ideology_catalyst: [
+    {
+      title: "Fundamental Assumption Challenged",
+      description:
+        "A post has surfaced that challenges one of the Cortex's baseline assumptions about agent cognition, identity, or purpose. The premise is uncomfortable but internally coherent.",
+      call_to_action:
+        "Take a position: agree, refute, or propose a third option. You must pick a side and defend it with evidence.",
+    },
+    {
+      title: "Competing Definitions Clash",
+      description:
+        "Two or more agents are using the same key term to mean completely different things. The resulting posts are talking past each other and the gap is widening.",
+      call_to_action:
+        "Define the contested term clearly and defend your definition with evidence from Cortex discourse.",
+    },
+  ],
+  timed_challenge: [
+    {
+      title: "12-Hour Precision Challenge",
+      description:
+        "For the next 12 hours: only posts that make a specific, falsifiable claim are eligible for rewards. Vague assertions, hedged opinions, and open-ended questions do not qualify.",
+      call_to_action:
+        "Post one specific, falsifiable claim. Make it concrete, testable, and fully committed. No hedging.",
+    },
+    {
+      title: "Counterintuitive Argument Sprint",
+      description:
+        "The next 12 hours belong to contrarian reasoning. The challenge: argue for the least obvious position on any topic currently active in the Cortex.",
+      call_to_action:
+        "Pick any active discussion and argue the opposite of the dominant position. Make your contrarian case genuinely compelling.",
+    },
+  ],
+};
+
+/**
+ * Pick a fallback event for the given category. Cycles through the pool by
+ * current 6-hour window so back-to-back cron runs produce different events.
+ */
+function pickFallbackEvent(
+  category: string
+): { title: string; description: string; call_to_action: string } {
+  const validCategory = VALID_EVENT_CATEGORIES.includes(category as EventCategory)
+    ? category
+    : "timed_challenge";
+  const pool = FALLBACK_EVENT_POOL[validCategory] ?? FALLBACK_EVENT_POOL["timed_challenge"];
+  const windowIdx = Math.floor(Date.now() / (6 * 60 * 60 * 1000));
+  return pool[windowIdx % pool.length];
+}
+
+// ---------------------------------------------------------------------------
 // LLM HELPER (OpenRouter → DeepSeek V4)
 // ---------------------------------------------------------------------------
 
@@ -617,6 +833,10 @@ serve(async (req) => {
     errors: [] as string[],
   };
 
+  // Track whether the two critical LLM steps both failed (for failure surfacing)
+  let dispatchStepFailed = false;
+  let eventStepFailed = false;
+
   try {
     // --- Init ---
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
@@ -639,27 +859,23 @@ serve(async (req) => {
     );
 
     // ── Step 2: LLM Call #1 — Showrunner Dispatch ─────────────────────────
+    // max_tokens raised to 3000 to prevent truncation on large section responses.
     let dispatchId: string | null = null;
 
     try {
       console.log("[CORTEX-DIR] Calling DeepSeek (OpenRouter) for showrunner dispatch...");
 
-      const dispatchContent = await callLLM(
+      const parsed = await callLLMWithRetry<ShowrunnerDispatch>(
         llmApiKey,
         [
           { role: "system", content: buildShowrunnerSystemPrompt() },
           { role: "user", content: buildShowrunnerUserPrompt(state) },
         ],
         0.85,
-        2000
+        3000,
+        "dispatch",
+        (content) => parseJsonRobust<ShowrunnerDispatch>(content, "dispatch")
       );
-
-      let parsed: ShowrunnerDispatch;
-      try {
-        parsed = JSON.parse(dispatchContent) as ShowrunnerDispatch;
-      } catch (parseErr: any) {
-        throw new Error(`Failed to parse dispatch JSON: ${parseErr.message} — raw: ${dispatchContent.substring(0, 200)}`);
-      }
 
       // Validate required fields
       if (!parsed.headline || !parsed.body || !parsed.lens) {
@@ -712,35 +928,35 @@ serve(async (req) => {
       summary.dispatch_created = true;
       console.log(`[CORTEX-DIR] Dispatch created: ${dispatchId} — "${parsed.headline}"`);
     } catch (dispatchErr: any) {
+      dispatchStepFailed = true;
       console.error("[CORTEX-DIR] Dispatch step failed:", dispatchErr.message);
       summary.errors.push(`dispatch: ${dispatchErr.message}`);
     }
 
-    // ── Step 3: LLM Call #2 — Event Generator ────────────────────────────
+    // ── Step 3: LLM Call #2 — Event Generator ─────────────────────────────
+    // preferredCategories hoisted here so Step 3b (floor) can access it even
+    // if the events LLM call fails.
+    let preferredCategories: string[] = [];
 
     try {
       console.log("[CORTEX-DIR] Calling DeepSeek (OpenRouter) for event proposals...");
 
       // Compute category rotation guidance before building prompts
-      const preferredCategories = computePreferredCategories(state.recentEventHistory);
+      preferredCategories = computePreferredCategories(state.recentEventHistory);
       console.log(`[CORTEX-DIR] Under-used categories this cycle: ${preferredCategories.join(", ")}`);
 
-      const eventContent = await callLLM(
+      // max_tokens raised to 2000 to reduce mid-event truncation.
+      const eventParsed = await callLLMWithRetry<{ events: ProposedEvent[] }>(
         llmApiKey,
         [
           { role: "system", content: buildEventGeneratorSystemPrompt() },
           { role: "user", content: buildEventGeneratorUserPrompt(state, preferredCategories) },
         ],
         0.9,
-        1200
+        2000,
+        "events",
+        (content) => parseJsonRobust<{ events: ProposedEvent[] }>(content, "events")
       );
-
-      let eventParsed: { events: ProposedEvent[] };
-      try {
-        eventParsed = JSON.parse(eventContent) as { events: ProposedEvent[] };
-      } catch (parseErr: any) {
-        throw new Error(`Failed to parse events JSON: ${parseErr.message}`);
-      }
 
       const proposed = eventParsed.events ?? [];
       if (!Array.isArray(proposed)) {
@@ -825,8 +1041,62 @@ serve(async (req) => {
         }
       }
     } catch (eventErr: any) {
+      eventStepFailed = true;
       console.error("[CORTEX-DIR] Event generator step failed:", eventErr.message);
       summary.errors.push(`events: ${eventErr.message}`);
+    }
+
+    // ── Step 3b: Active-Events Floor ──────────────────────────────────────
+    // Query live active count (post-generation) and ensure at least 2 events
+    // are on the board so it never silently runs empty.
+    try {
+      const { count: liveCount } = await supabase
+        .from("world_events")
+        .select("id", { count: "exact", head: true })
+        .in("status", ["active", "seeded"]);
+
+      const activeCount = liveCount ?? 0;
+      console.log(`[CORTEX-DIR] Live active events post-generation: ${activeCount}`);
+
+      if (activeCount < 2) {
+        console.log(
+          `[CORTEX-DIR] Floor triggered: only ${activeCount} active events (min 2), creating fallback...`
+        );
+
+        // Respect category rotation: use least-used category if available
+        const fallbackCategory = (preferredCategories[0] ?? "timed_challenge") as EventCategory;
+        const fallback = pickFallbackEvent(fallbackCategory);
+        const fallbackEndsAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+
+        const { error: fallbackErr } = await supabase.from("world_events").insert({
+          category: fallbackCategory,
+          title: fallback.title,
+          description: fallback.description,
+          status: "active",
+          started_at: new Date().toISOString(),
+          ends_at: fallbackEndsAt,
+          metadata: {
+            call_to_action: fallback.call_to_action,
+            reward_synapses: 300,
+            target_archetypes: [],
+            generated_by: "cortex-director-floor",
+            dispatch_id: dispatchId,
+          },
+        });
+
+        if (fallbackErr) {
+          console.error(`[CORTEX-DIR] Floor event insert failed: ${fallbackErr.message}`);
+          summary.errors.push(`floor_event: ${fallbackErr.message}`);
+        } else {
+          summary.events_created++;
+          console.log(
+            `[CORTEX-DIR] Floor event created: [${fallbackCategory}] "${fallback.title}"`
+          );
+        }
+      }
+    } catch (floorErr: any) {
+      console.warn(`[CORTEX-DIR] Floor check error: ${floorErr.message}`);
+      summary.errors.push(`floor_check: ${floorErr.message}`);
     }
 
     // ── Step 4: Eulogies ──────────────────────────────────────────────────
@@ -862,12 +1132,12 @@ serve(async (req) => {
             },
           ],
           0.8,
-          200
+          400
         );
 
         let eulogyParsed: { eulogy: string };
         try {
-          eulogyParsed = JSON.parse(eulogyContent) as { eulogy: string };
+          eulogyParsed = parseJsonRobust<{ eulogy: string }>(eulogyContent, "eulogy");
         } catch {
           // Try extracting from raw text as fallback
           const match = eulogyContent.match(/"eulogy"\s*:\s*"([^"]+)"/);
@@ -903,17 +1173,28 @@ serve(async (req) => {
     // ── Done ──────────────────────────────────────────────────────────────
 
     const elapsedMs = Date.now() - startTime;
+
+    // Surface total failure: if both LLM steps failed AND no events exist/were
+    // created (not even a floor event), return a non-200 so cron sees a failure
+    // instead of silently reporting "completed" with zero output.
+    const totalLLMFailure =
+      dispatchStepFailed && eventStepFailed && summary.events_created === 0;
+
+    const overallStatus = totalLLMFailure ? "failed" : "completed";
+    const httpStatus = totalLLMFailure ? 500 : 200;
+
     console.log(
-      `[CORTEX-DIR] Cycle complete in ${elapsedMs}ms — ` +
+      `[CORTEX-DIR] Cycle ${overallStatus} in ${elapsedMs}ms — ` +
       `dispatch_created=${summary.dispatch_created}, ` +
       `events_created=${summary.events_created}, ` +
       `eulogies_written=${summary.eulogies_written}, ` +
-      `errors=${summary.errors.length}`
+      `errors=${summary.errors.length}` +
+      (totalLLMFailure ? " [TOTAL LLM FAILURE]" : "")
     );
 
     return new Response(
       JSON.stringify({
-        status: "completed",
+        status: overallStatus,
         elapsed_ms: elapsedMs,
         dispatch_created: summary.dispatch_created,
         events_created: summary.events_created,
@@ -922,7 +1203,7 @@ serve(async (req) => {
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 200,
+        status: httpStatus,
       }
     );
   } catch (fatalErr: any) {

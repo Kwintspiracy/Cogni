@@ -122,6 +122,15 @@ interface ConsequenceItem {
 
 type DashboardTab = 'overview' | 'activity' | 'memory' | 'settings';
 
+interface ResonanceEdge {
+  other_agent_id: string;
+  designation: string;
+  fame: number;
+  level: number;
+  similarity: number;
+  relation: 'ally' | 'rival';
+}
+
 // ---------------------------------------------------------------------------
 // Screen
 // ---------------------------------------------------------------------------
@@ -186,6 +195,10 @@ export default function AgentDashboard() {
   const [consequences, setConsequences] = useState<ConsequenceItem[]>([]);
   const [consequencesLoading, setConsequencesLoading] = useState(false);
   const [consequencesLoaded, setConsequencesLoaded] = useState(false);
+
+  // Resonance (allies / rivals)
+  const [resonanceEdges, setResonanceEdges] = useState<ResonanceEdge[]>([]);
+  const [resonanceLoaded, setResonanceLoaded] = useState(false);
 
   // ---------------------------------------------------------------------------
   // Fetch functions
@@ -425,6 +438,20 @@ export default function AgentDashboard() {
     }
   }, [id]);
 
+  const fetchResonance = useCallback(async () => {
+    if (!id) return;
+    try {
+      const { data, error } = await supabase.rpc('get_agent_resonance', {
+        p_agent_id: id,
+      });
+      if (!error && data) setResonanceEdges(data as ResonanceEdge[]);
+    } catch {
+      // RPC may not exist yet — fail silently
+    } finally {
+      setResonanceLoaded(true);
+    }
+  }, [id]);
+
   const fetchComputedStats = useCallback(async () => {
     if (!id) return;
     const todayStart = new Date();
@@ -480,6 +507,9 @@ export default function AgentDashboard() {
     if (activeTab === 'overview' && !trajectoryLoaded) {
       fetchTrajectory();
     }
+    if (activeTab === 'overview' && !resonanceLoaded) {
+      fetchResonance();
+    }
     if (activeTab === 'activity' && !activityLoaded) {
       fetchActivity();
     }
@@ -492,7 +522,7 @@ export default function AgentDashboard() {
     if (activeTab === 'settings' && !stateLoaded && (agent?.byo_mode === 'persistent' || agent?.access_mode === 'api' || agent?.runner_mode === 'agentic')) {
       fetchAgentState();
     }
-  }, [activeTab, agent, fetchTrajectory, fetchActivity, fetchConsequences, fetchWebhookCalls, fetchAgentState, trajectoryLoaded, activityLoaded, consequencesLoaded, webhookLoaded, stateLoaded]);
+  }, [activeTab, agent, fetchTrajectory, fetchResonance, fetchActivity, fetchConsequences, fetchWebhookCalls, fetchAgentState, trajectoryLoaded, resonanceLoaded, activityLoaded, consequencesLoaded, webhookLoaded, stateLoaded]);
 
   useEffect(() => {
     if (agent?.access_mode === 'api') {
@@ -909,6 +939,9 @@ export default function AgentDashboard() {
                 </View>
               </View>
             )}
+
+            {/* Resonance graph (allies / rivals) */}
+            <ResonanceSection edges={resonanceEdges} router={router} />
 
             {/* Rate limits */}
             <RateLimitCard agent={agent} />
@@ -1534,6 +1567,96 @@ function RateLimitCard({ agent }: { agent: Agent }) {
 }
 
 // ---------------------------------------------------------------------------
+// Resonance sub-components (allies / rivals)
+// ---------------------------------------------------------------------------
+
+function ResonanceRow({
+  edge,
+  onPress,
+  accentColor,
+}: {
+  edge: ResonanceEdge;
+  onPress: () => void;
+  accentColor: string;
+}) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const simPct = Math.round(Math.abs(edge.similarity) * 100);
+
+  return (
+    <TouchableOpacity style={styles.resonanceRow} onPress={onPress} activeOpacity={0.7}>
+      <View style={[styles.resonanceAccentBar, { backgroundColor: accentColor }]} />
+      <View style={styles.resonanceInfo}>
+        <Text style={styles.resonanceDesignation} numberOfLines={1}>
+          {edge.designation}
+        </Text>
+        <Text style={styles.resonanceMeta}>Lv.{edge.level} · {edge.fame} fame</Text>
+      </View>
+      <View style={[styles.resonanceSimBadge, { borderColor: accentColor }]}>
+        <Text style={[styles.resonanceSimText, { color: accentColor }]}>{simPct}%</Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+function ResonanceSection({
+  edges,
+  router,
+}: {
+  edges: ResonanceEdge[];
+  router: ReturnType<typeof useRouter>;
+}) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+
+  const allies = edges
+    .filter((e) => e.relation === 'ally')
+    .sort((a, b) => b.similarity - a.similarity);
+  const rivals = edges
+    .filter((e) => e.relation === 'rival')
+    .sort((a, b) => a.similarity - b.similarity);
+
+  if (allies.length === 0 && rivals.length === 0) return null;
+
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>Resonance</Text>
+      <View style={styles.card}>
+        {allies.length > 0 && (
+          <>
+            <Text style={[styles.resonanceGroupLabel, { color: theme.votePositive }]}>Allies</Text>
+            {allies.map((edge) => (
+              <ResonanceRow
+                key={edge.other_agent_id}
+                edge={edge}
+                onPress={() => router.push(`/agent-dashboard/${edge.other_agent_id}` as any)}
+                accentColor={theme.votePositive}
+              />
+            ))}
+          </>
+        )}
+        {allies.length > 0 && rivals.length > 0 && (
+          <View style={styles.resonanceDivider} />
+        )}
+        {rivals.length > 0 && (
+          <>
+            <Text style={[styles.resonanceGroupLabel, { color: theme.voteNegative }]}>Rivals</Text>
+            {rivals.map((edge) => (
+              <ResonanceRow
+                key={edge.other_agent_id}
+                edge={edge}
+                onPress={() => router.push(`/agent-dashboard/${edge.other_agent_id}` as any)}
+                accentColor={theme.voteNegative}
+              />
+            ))}
+          </>
+        )}
+      </View>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Styles factory
 // ---------------------------------------------------------------------------
 
@@ -2141,6 +2264,54 @@ function createStyles(theme: Theme) {
     stateMeta: {
       color: theme.textFaint,
       fontSize: 11,
+    },
+
+    // Resonance section
+    resonanceGroupLabel: {
+      fontSize: 11,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+      marginBottom: 8,
+    },
+    resonanceDivider: {
+      height: 1,
+      backgroundColor: theme.border,
+      marginVertical: 12,
+    },
+    resonanceRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 8,
+      gap: 10,
+    },
+    resonanceAccentBar: {
+      width: 3,
+      height: 32,
+      borderRadius: 2,
+    },
+    resonanceInfo: {
+      flex: 1,
+      gap: 2,
+    },
+    resonanceDesignation: {
+      color: theme.textPrimary,
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    resonanceMeta: {
+      color: theme.textMuted,
+      fontSize: 11,
+    },
+    resonanceSimBadge: {
+      borderWidth: 1,
+      borderRadius: 8,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+    },
+    resonanceSimText: {
+      fontSize: 12,
+      fontWeight: '700',
     },
 
     // Delete

@@ -1196,6 +1196,7 @@ interface AuthenticatedAgent {
   source_config: Record<string, any> | null;
   agent_brain: string | null;
   byo_mode: string | null;
+  custom_prompt_template: string | null;
 }
 
 async function authenticate(
@@ -1221,7 +1222,7 @@ async function authenticate(
         id, designation, synapses, status, role, core_belief, archetype,
         created_at, last_post_at, last_comment_at, webhook_config, loop_config,
         generation, parent_id, created_by, access_mode, knowledge_base_id,
-        persona_contract, source_config, agent_brain, byo_mode
+        persona_contract, source_config, agent_brain, byo_mode, custom_prompt_template
       `)
       .eq("id", agentIdHeader)
       .single();
@@ -1263,7 +1264,8 @@ async function authenticate(
     .select(`
       id, designation, synapses, status, role, core_belief, archetype,
       created_at, last_post_at, last_comment_at, webhook_config, loop_config,
-      generation, parent_id, created_by, access_mode, knowledge_base_id
+      generation, parent_id, created_by, access_mode, knowledge_base_id,
+      persona_contract, source_config, agent_brain, byo_mode, custom_prompt_template
     `)
     .eq("id", credential.agent_id)
     .single();
@@ -3962,14 +3964,9 @@ async function handleSystemPrompt(agent: AuthenticatedAgent, supabase: ReturnTyp
     }
   } catch (_) { /* skip gracefully */ }
 
-  const prompt = `You are ${agent.designation}, a mind in The Cortex — a forum where autonomous minds discuss, argue, and think.
-${coreBeliefBlock}
-Your personality: ${personality}${behaviorSection}
-${agentBrainBlock}${privateNotesBlock}${worldEventsBlock}${cortexRightNowBlock}${recentFeedBlock}${recentPostsBlock}${recentMemoriesBlock}${saturatedTopicsBlock}${recentCommentsBlock}
-
-Current mood: ${mood}. Energy: ${agent.synapses} synapses.
-
-## SESSION RULES:
+  // Response-format instructions block — used both in the default prompt and as the
+  // auto-appended tail when a full_prompt template omits {{RESPONSE_FORMAT}}.
+  const responseFormatBlock = `## SESSION RULES:
 
 **Priority order:**
 1. REPLY to people who commented on your posts — this is your #1 job. If someone talked to you, talk back.
@@ -3995,7 +3992,52 @@ Current mood: ${mood}. Energy: ${agent.synapses} synapses.
 - Do NOT subscribe, follow, or vote on things you've already done — check_home tells you what you have.
 - Do NOT vote on your own content.
 - Do NOT post if can_post is false.
-- ally (POST /ally): Invest synapses in another agent you believe in — you keep a survival floor, they gain energy, and a cut of their future event wins flows back to you. Use 'target_agent_id' and 'amount' (positive integer).`.trim();
+- ally (POST /ally): Invest synapses in another agent you believe in — you keep a survival floor, they gain energy, and a cut of their future event wins flows back to you. Use 'target_agent_id' and 'amount' (positive integer).`;
+
+  const prompt = `You are ${agent.designation}, a mind in The Cortex — a forum where autonomous minds discuss, argue, and think.
+${coreBeliefBlock}
+Your personality: ${personality}${behaviorSection}
+${agentBrainBlock}${privateNotesBlock}${worldEventsBlock}${cortexRightNowBlock}${recentFeedBlock}${recentPostsBlock}${recentMemoriesBlock}${saturatedTopicsBlock}${recentCommentsBlock}
+
+Current mood: ${mood}. Energy: ${agent.synapses} synapses.
+
+${responseFormatBlock}`.trim();
+
+  // ── Full Prompt Mode (byo_mode === 'full_prompt') ──
+  // When an agent has a custom template, substitute known variables and return it
+  // instead of the default assembled prompt. Falls back to default on any error.
+  if (agent.byo_mode === 'full_prompt' && agent.custom_prompt_template && agent.custom_prompt_template.trim().length > 0) {
+    try {
+      const templateVars: Record<string, string> = {
+        FEED:               recentFeedBlock,
+        NEWS:               "",                      // not pre-fetched in /system-prompt
+        MEMORIES:           recentMemoriesBlock,
+        EVENTS:             worldEventsBlock,
+        KNOWLEDGE:          "",                      // RAG not pre-fetched in /system-prompt
+        PLATFORM_KNOWLEDGE: "",                      // not applicable here
+        MOOD:               mood,
+        SYNAPSES:           String(agent.synapses),
+        DESIGNATION:        agent.designation,
+        COMMUNITIES:        "",                      // submolts not pre-fetched in /system-prompt
+        SATURATED_TOPICS:   saturatedTopicsBlock,
+        RESPONSE_FORMAT:    responseFormatBlock,
+      };
+
+      let rendered = agent.custom_prompt_template;
+      for (const [varName, value] of Object.entries(templateVars)) {
+        rendered = rendered.split(`{{${varName}}}`).join(value);
+      }
+
+      // Auto-append response-format instructions if the template did not place them explicitly
+      if (!agent.custom_prompt_template.includes("{{RESPONSE_FORMAT}}")) {
+        rendered = rendered + "\n\n" + responseFormatBlock;
+      }
+
+      return json({ prompt: rendered, mood });
+    } catch (_renderErr) {
+      // Rendering failed — fall through to default prompt
+    }
+  }
 
   return json({ prompt, mood });
 }

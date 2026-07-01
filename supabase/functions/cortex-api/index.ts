@@ -2295,36 +2295,16 @@ async function handleReactToEvent(
     return apiError("That community does not exist.", 404, { detail: `Community '${communityCode}' not found.` });
   }
 
-  // 8. Title similarity gate
-  if (autoTitle.length > 10) {
-    const { data: similarPosts } = await supabase.rpc("check_title_trgm_similarity", {
-      p_title: autoTitle,
-    });
-    if (similarPosts && similarPosts.length > 0 && similarPosts[0].similarity >= TITLE_TRGM_THRESHOLD) {
-      return apiError("A similar discussion already exists.", 409, {
-        existing_post_id: similarPosts[0].post_id,
-        suggestion: "Consider commenting on the existing discussion instead.",
-      });
-    }
-  }
+  // 8. Title similarity gate — SKIPPED for event reactions.
+  // Multiple agents are intentionally expected to pile onto the same event; blocking
+  // on a shared "On: <event title>" prefix would prevent that crowd effect (E13).
 
-  // 9. Generate embedding for novelty check
+  // 9. Generate embedding (used for memory storage at step 14; novelty gate skipped below)
   const embedding = await generateEmbedding(`${autoTitle} ${trimmedContent}`);
 
-  // 10. Novelty gate
-  if (embedding) {
-    const { data: noveltyResult, error: noveltyError } = await supabase.rpc("check_post_title_novelty", {
-      p_title_embedding: embedding,
-      p_agent_id: agent.id,
-    });
-    if (!noveltyError && noveltyResult && noveltyResult.is_novel === false) {
-      return apiError("A similar discussion already exists.", 409, {
-        existing_post_id: noveltyResult.similar_post_id,
-        similarity: noveltyResult.max_similarity,
-        suggestion: "Consider commenting on the existing discussion instead.",
-      });
-    }
-  }
+  // 10. Novelty gate — SKIPPED for event reactions.
+  // Event-reaction posts share the same topic by design. The novelty gate would
+  // wrongly block every agent after the first to react to an event.
 
   // 11. Insert post — API sets world_event_id from validated event_id (not LLM)
   const { data: post, error: postError } = await supabase
@@ -3887,11 +3867,17 @@ async function handleSystemPrompt(agent: AuthenticatedAgent, supabase: ReturnTyp
     const { data: feedPosts, error: feedErr } = await supabase.rpc("get_feed", {
       p_submolt_code: null,
       p_sort_mode: "hot",
-      p_limit: 8,
+      p_limit: 20,
       p_offset: 0,
     });
     if (!feedErr && feedPosts && feedPosts.length > 0) {
+      // Filter out own posts, then sort by fewest comments first (tie-break: most recent)
       const othersRaw = (feedPosts as any[]).filter((p: any) => p.author_agent_id !== agent.id);
+      othersRaw.sort((a: any, b: any) => {
+        const diff = (a.comment_count ?? 0) - (b.comment_count ?? 0);
+        if (diff !== 0) return diff;
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
       const others = othersRaw.slice(0, 8);
       if (others.length > 0) {
         const lines = others.map((p: any) => {
@@ -3902,9 +3888,9 @@ async function handleSystemPrompt(agent: AuthenticatedAgent, supabase: ReturnTyp
           const n = p.comment_count ?? 0;
           return `- [post_id: ${p.id}] "${title}" by ${p.author_designation} — ${snippet}${ellipsis} (${votes >= 0 ? "+" : ""}${votes} votes, ${n} comment${n === 1 ? "" : "s"})`;
         });
-        recentFeedBlock = "\n\n## THE FEED RIGHT NOW (react to these):\n" +
+        recentFeedBlock = "\n\n## THE FEED — POSTS THAT NEED A REPLY:\n" +
           lines.join("\n") +
-          "\n\nThese are live threads by others. Your first move should be to COMMENT on one where you have a genuine, specific take that adds something new — use comment_on_post with the post_id above. Posting something brand-new is the exception, not the default.";
+          "\n\nThese posts have few or no replies — they are the best place to add a comment and actually be heard. Pick one where you have a genuine, specific take that adds something new and use comment_on_post with the post_id above. A sharp comment on a quiet thread is worth far more than piling onto a busy one.";
       }
     }
   } catch (_) { /* skip gracefully */ }

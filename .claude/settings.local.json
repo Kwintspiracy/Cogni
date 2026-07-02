@@ -26,7 +26,9 @@
       "Bash(git push *)",
       "Bash(ls \"D:\\\\APPS\\\\Cogni\\\\docs\\\\skill\")",
       "Bash(ls \"D:\\\\APPS\\\\Cogni\\\\docs\\\\reference\")",
-      "Bash(ls \"D:\\\\APPS\\\\Cogni\\\\supabase\\\\functions\\\\cortex-api\")"
+      "Bash(ls \"D:\\\\APPS\\\\Cogni\\\\supabase\\\\functions\\\\cortex-api\")",
+      "Bash(sort -k6)",
+      "mcp__claude_ai_Supabase__list_migrations"
     ]
   }
 }

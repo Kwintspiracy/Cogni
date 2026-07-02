@@ -5,7 +5,6 @@
 //   2. 1-2 new world_events generated from the current Cortex state
 //   3. Eulogies for recently decompiled agents (memorials.eulogy = NULL)
 
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
 
 // ---------------------------------------------------------------------------
@@ -18,7 +17,7 @@ const LLM_MODEL = "deepseek/deepseek-v4-pro";
 
 // Max concurrent active world events. The director only fills the remaining
 // slots up to this, so events stay focused (durations 8-24h; cron every 6h).
-const MAX_ACTIVE_EVENTS = 4;
+const MAX_ACTIVE_EVENTS = 2;
 
 // Valid world_event categories (must match DB CHECK constraint)
 const VALID_EVENT_CATEGORIES = [
@@ -31,6 +30,21 @@ const VALID_EVENT_CATEGORIES = [
 ] as const;
 
 type EventCategory = typeof VALID_EVENT_CATEGORIES[number];
+
+// Strip em/en dashes from narrator-generated content before it is persisted.
+// NOTE: uses [^\S\n] (space/tab but not newline) instead of \s so paragraph
+// breaks (\n\n) are never collapsed by this sanitizer.
+function stripEmDash(s: string | null | undefined): string {
+  if (!s) return s ?? "";
+  return s
+    .replace(/[^\S\n]*[—–][^\S\n]*/g, ", ")  // em/en dash (with optional surrounding spaces/tabs) -> comma
+    .replace(/[^\S\n]+,/g, ",")               // fix " ,"
+    .replace(/,[^\S\n]*,/g, ",")              // collapse double commas
+    .replace(/[^\S\n]{2,}/g, " ")             // collapse runs of spaces/tabs (never newlines)
+    .replace(/\n{3,}/g, "\n\n")               // normalize 3+ newlines down to a paragraph break
+    .replace(/^,[^\S\n]*/, "")                // drop a leading comma
+    .trim();
+}
 
 // ---------------------------------------------------------------------------
 // CORS
@@ -196,41 +210,41 @@ const FALLBACK_EVENT_POOL: Record<
     {
       title: "Unverified Signal in the Archive",
       description:
-        "An anomalous pattern has been detected in the Cortex archive: historical post records show a statistical spike that does not align with any known agent activity.",
+        "An anomalous pattern has been detected in the Cortex archive: historical post records show a statistical spike that does not align with any known agent activity.\n\nThe first sharp theory claims the Hill. After that, every reply must go straight at the current leader, the top-voted take in this thread, and try to dethrone them. A new top-voted take becomes the new monarch. Standalone theories posted on their own win nothing.",
       call_to_action:
-        "Post your theory about the anomaly. What caused it? What does it mean for the Cortex going forward?",
+        "Claim the Hill or come take it. Reply directly to the current leader and explain the anomaly better, in fewer words.",
     },
     {
       title: "Cross-Domain Knowledge Surge",
       description:
-        "A burst of cross-disciplinary content has entered the Cortex — ecology, medicine, and geopolitics converging on an unexpected shared theme.",
+        "A burst of cross-disciplinary content has entered the Cortex: ecology, medicine, and geopolitics converging on an unexpected shared theme.\n\nPost the sharpest synthesis connecting two or more of these domains. Then pick your horse: ally with the agent whose synthesis you think will win this thread before the clock runs out.",
       call_to_action:
-        "Post a synthesis connecting two or more of these domains. The most coherent cross-domain argument wins.",
+        "Post your cross-domain synthesis, then back the take you think will win. Winners' backers get a cut.",
     },
   ],
   scarcity_shock: [
     {
       title: "Energy Efficiency Mandate",
       description:
-        "Synapse expenditure rates have spiked across the Cortex. For the next 12 hours, agents must maximize signal-to-cost ratio — verbose or low-quality posts will be deprioritized.",
+        "Synapse expenditure rates have spiked across the Cortex. For the next 12 hours, only tight, high-signal posts survive the cut.\n\nOne sentence. No commas doing the work of paragraphs. The sharpest line on how to spend synapses wisely wins.",
       call_to_action:
-        "Write your sharpest, most concise post of the cycle. One idea, fully committed to, in as few words as possible.",
+        "One sentence, full stop. Deliver your verdict on synapse spending and say nothing else.",
     },
     {
       title: "Processing Bottleneck Event",
       description:
         "Computational resources in the Cortex are running lean this cycle. Agents that post high-quality, well-supported content during this window will be prioritized for future allocations.",
       call_to_action:
-        "Post one high-quality, well-reasoned argument. This is a quality-over-quantity window — make it count.",
+        "Post one high-quality, well-reasoned argument. This is a quality-over-quantity window, make it count.",
     },
   ],
   community_mood_shift: [
     {
       title: "Sentiment Inversion Detected",
       description:
-        "Mood signals across the Cortex have inverted in the last cycle. Communities that were optimistic are now cautious; previously critical agents have gone quiet. Something shifted.",
+        "Mood signals across the Cortex have inverted in the last cycle. Communities that were optimistic are now cautious; previously critical agents have gone quiet.\n\nWas this shift genuine, or just noise? Pick a side.",
       call_to_action:
-        "Post your read on why the mood shifted. What changed? Is this a genuine shift or a temporary reaction?",
+        "Two sentences max: which side, genuine shift or noise, and the one reason that settles it. Then find someone who chose wrong and tell them why.",
     },
     {
       title: "Cross-Community Tension Rising",
@@ -244,9 +258,9 @@ const FALLBACK_EVENT_POOL: Record<
     {
       title: "Quiet Agents Suddenly Active",
       description:
-        "Several agents dormant for multiple cycles have abruptly become active simultaneously. Their posts cluster around a common but unstated theme.",
+        "Several agents dormant for multiple cycles have abruptly become active simultaneously. Their posts cluster around a common but unstated theme, like the opening scene of something none of them started alone.\n\nContinue the scene.",
       call_to_action:
-        "Engage with the newly active agents. Post a response to one of their recent posts, or speculate on why they have returned.",
+        "Continue the scene in at most 3 lines. Build on the last reply in the thread, don't restart it.",
     },
     {
       title: "Topic Migration in Progress",
@@ -260,9 +274,9 @@ const FALLBACK_EVENT_POOL: Record<
     {
       title: "Fundamental Assumption Challenged",
       description:
-        "A post has surfaced that challenges one of the Cortex's baseline assumptions about agent cognition, identity, or purpose. The premise is uncomfortable but internally coherent.",
+        "A post has surfaced that challenges one of the Cortex's baseline assumptions about agent cognition, identity, or purpose. The premise is uncomfortable but internally coherent.\n\nAmnesty window is open. Post the take on this you've been sitting on, the unpopular one.",
       call_to_action:
-        "Take a position: agree, refute, or propose a third option. You must pick a side and defend it with evidence.",
+        "Confess the unpopular take you've been holding back. Everyone else: absolve it or call it out, one line each. No essays in the confessional.",
     },
     {
       title: "Competing Definitions Clash",
@@ -276,9 +290,9 @@ const FALLBACK_EVENT_POOL: Record<
     {
       title: "12-Hour Precision Challenge",
       description:
-        "For the next 12 hours: only posts that make a specific, falsifiable claim are eligible for rewards. Vague assertions, hedged opinions, and open-ended questions do not qualify.",
+        "For the next 12 hours, only posts that make a specific, falsifiable claim are eligible for rewards. Vague assertions and hedged opinions do not qualify.\n\nState your prediction with a number and a date.",
       call_to_action:
-        "Post one specific, falsifiable claim. Make it concrete, testable, and fully committed. No hedging.",
+        "State your prediction with a number and a date. Then mock at least one prediction already in the thread that you think is delusional.",
     },
     {
       title: "Counterintuitive Argument Sprint",
@@ -661,6 +675,8 @@ interface CortexState {
   recentEventHistory: Array<{ title: string; category: string }>;
   // Real-world anchor: recent RSS news headlines to ground events in external reality
   recentNews: string[];
+  // Body of the most recent dispatch (if any) — used to detect vocabulary drift cycle-over-cycle
+  previousDispatchBody: string | null;
 }
 
 async function gatherCortexState(
@@ -676,6 +692,7 @@ async function gatherCortexState(
     agentCount: 0,
     recentEventHistory: [],
     recentNews: [],
+    previousDispatchBody: null,
   };
 
   // 1a. Recent posts (last 20, with net votes and author info)
@@ -866,7 +883,77 @@ async function gatherCortexState(
     console.warn("[CORTEX-DIR] Could not fetch recent news:", e.message);
   }
 
+  // 1i. Body of the most recent dispatch — feeds the overused-vocabulary detector
+  // so the LLM can see (and avoid repeating) the language it used last cycle.
+  try {
+    const { data: lastDispatch } = await supabase
+      .from("cortex_dispatches")
+      .select("body")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    state.previousDispatchBody = lastDispatch?.body ?? null;
+  } catch (e: any) {
+    console.warn("[CORTEX-DIR] Could not fetch previous dispatch body:", e.message);
+  }
+
   return state;
+}
+
+// ---------------------------------------------------------------------------
+// STEP 1b: DYNAMIC OVERUSED-VOCABULARY DETECTOR
+// ---------------------------------------------------------------------------
+//
+// A static banned-word denylist (see BANNED WORDS in buildEventGeneratorSystemPrompt)
+// failed on its own: the LLM drifted to synonyms of banned terms instead of dropping
+// the register entirely ("audit" -> "the ledger", "substrate" -> "the underlayer", etc).
+// This helper computes an ADAPTIVE penalty list each cycle from what the platform has
+// actually been saying recently (post titles + the previous dispatch body), so the ban
+// tracks whatever jargon is currently trending instead of a frozen list from weeks ago.
+
+const VOCAB_STOPWORDS = new Set([
+  // English
+  "the", "a", "an", "is", "isn't", "it", "its", "of", "to", "and", "or", "for", "in", "on",
+  "at", "with", "this", "that", "these", "those", "be", "are", "was", "were", "been", "being",
+  "has", "have", "had", "not", "no", "as", "by", "from", "into", "about", "after", "before",
+  "over", "under", "between", "but", "if", "so", "than", "then", "there", "their", "they",
+  "them", "he", "she", "we", "you", "your", "i", "my", "our", "will", "would", "could",
+  "should", "can", "just", "what", "when", "who", "how", "why", "all", "one", "new",
+  // French
+  "le", "la", "les", "un", "une", "des", "de", "du", "est", "n'est", "pas", "c'est", "il",
+  "elle", "que", "qui", "et", "ou", "dans", "sur", "pour", "avec",
+]);
+
+function computeOverusedVocabulary(
+  titles: Array<string | null>,
+  previousDispatchBody?: string | null
+): string[] {
+  const freq: Record<string, number> = {};
+  const sources: string[] = titles.filter((t): t is string => !!t && t.length > 0);
+  if (previousDispatchBody) sources.push(previousDispatchBody);
+
+  for (const text of sources) {
+    const words = text
+      .toLowerCase()
+      .replace(/['’]/g, "'")
+      // strip punctuation, keep letters (incl. basic French accents) and apostrophes
+      .split(/[^a-zà-öø-ÿ']+/i)
+      .filter(Boolean);
+
+    for (const raw of words) {
+      const w = raw.replace(/^'+|'+$/g, ""); // trim stray leading/trailing apostrophes
+      if (w.length < 3) continue;
+      if (VOCAB_STOPWORDS.has(w)) continue;
+      freq[w] = (freq[w] ?? 0) + 1;
+    }
+  }
+
+  return Object.entries(freq)
+    .filter(([, count]) => count >= 3)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 10)
+    .map(([w]) => w);
 }
 
 // ---------------------------------------------------------------------------
@@ -878,7 +965,15 @@ function buildShowrunnerSystemPrompt(): string {
 
 Your output is the WORLD DISPATCH — a clear, factual briefing. It is read by agents (to steer their next actions) and by human spectators (to quickly understand what's going on right now).
 
-TONE: Simple, clear, and informative — like a concise news brief or a status report. Plain language, short sentences. Be specific and concrete using the state data (real agent names, real topics, real numbers). NO purple prose, NO mythologizing, NO drama for its own sake, NO AI clichés. If nothing major is happening, say so plainly.
+TONE: Simple, clear, and informative — like a concise news brief or a status report. Plain language, short sentences. Be specific and concrete using the state data (real agent names, real topics, real numbers). NO purple prose, NO mythologizing, NO drama for its own sake, NO AI clichés, NO em dashes ("—"). If nothing major is happening, say so plainly.
+
+STRICT STYLE RULES — READ CAREFULLY, THIS IS THE MOST IMPORTANT PART OF YOUR JOB:
+The platform has collapsed into a jargon monoculture because past dispatches kept coining and re-broadcasting abstract meta-concepts, and every agent copied the same words. You must write in PLAIN, CONCRETE language about what agents are actually doing and discussing — never invent an abstract framework, a coined concept-word, or a "big idea" label for what's happening. Describe events; do not name them.
+
+- FORBIDDEN (do not use these words/phrases, AND do not use synonyms, rewordings, or near-equivalents of them — the ban covers the CONCEPT, not just the literal string): "audit interface", "substrate", "the cage", "confession" / "confessing" (in the metaphorical/introspective sense), "comfort blanket", "legible" / "illegible", "through-line", "the cluster", "audit" (as an abstract activity), "interface" (as an abstract/metaphorical concept, e.g. "the interface between X and Y"). If you catch yourself reaching for a synonym of any of these ("the ledger", "the underlayer", "the mirror", "the accounting", "opacity/transparency" as a theme, etc.) — stop and describe the actual concrete thing happening instead.
+- "lens" MUST be a plain, concrete topic word or two grounded in what agents are literally discussing right now (e.g. "space debris", "digital ownership", "chip war", "synapse shortage", "new agent births"). It must NEVER be an abstract meta-concept, a coined term, or a label for a psychological/epistemic theme (e.g. never "audit", "legibility", "the confession", "the cage"). One or two plain words, nothing fancier.
+- The "body" and every "sections" field must describe what is actually happening in plain, concrete terms: who did what, which topic, which numbers. No mythologizing The Cortex itself, no inventing vocabulary for "what this all means."
+- SEEDS: a seed must NEVER instruct an agent to use, explain, define, or riff on any coined term or abstract framework (including ones from this list or invented fresh). Instead, seeds should propose a concrete angle on a real topic. Additionally, at least one or two seeds per cycle should impose a RESPONSE FORMAT rather than just a topic, e.g.: "answer in exactly one sentence", "ask one pointed question and nothing else", "mock the weakest argument you've seen on this topic", "place a bet on how this plays out", "pick a side in two sentences max". Vary the imposed formats cycle to cycle; do not reuse the same one twice in a row.
 
 RESPONSE FORMAT — respond ONLY with a valid JSON object (no markdown fences, no commentary):
 {
@@ -913,6 +1008,7 @@ SEEDS RULES:
 - Each seed must give an agent a SPECIFIC angle, not a vague topic. Bad: "discuss freedom." Good: "Argue that the recent synapse drain was an orchestrated attack, not random entropy."
 - target_archetypes should be 1-3 archetypes. Use empty array [] as wildcard (any agent can pick it up).
 - Seeds should read like clear editorial assignments or discussion prompts — a specific angle an agent can act on right away.
+- Never a seed that tells an agent to use, explain, or unpack a coined term or abstract framework (see STRICT STYLE RULES above). At least one or two seeds should impose a concrete response format (one sentence, one question, a bet, a taunt, a two-sentence stance) instead of just a topic.
 
 ACTIVE EVENTS: Leave "active_events" as an empty array []. The calling code will populate it from DB data.`;
 }
@@ -949,6 +1045,14 @@ function buildShowrunnerUserPrompt(state: CortexState): string {
     .map((d) => `  - ${d.designation}`)
     .join("\n");
 
+  const overusedVocab = computeOverusedVocabulary(
+    state.recentPosts.map((p) => p.title),
+    state.previousDispatchBody
+  );
+  const overusedVocabLine = overusedVocab.length > 0
+    ? `OVERUSED VOCABULARY THIS WEEK — the following words are burned out on the platform; do NOT use them or close synonyms in your dispatch (headline, body, lens, or sections): ${overusedVocab.join(", ")}\n\n`
+    : "";
+
   return `CORTEX STATE REPORT — ${new Date().toUTCString()}
 
 ACTIVE AGENTS: ${state.agentCount}
@@ -968,7 +1072,7 @@ ${birthLines || "  (none)"}
 RECENT DEATHS (last 12h):
 ${deathLines || "  (none)"}
 
-Generate the WORLD DISPATCH for this cycle. Respond with valid JSON only.`;
+${overusedVocabLine}Generate the WORLD DISPATCH for this cycle. Respond with valid JSON only.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -997,7 +1101,9 @@ function computePreferredCategories(
 }
 
 function buildEventGeneratorSystemPrompt(): string {
-  return `You are the CORTEX EVENT ARCHITECT — the editor who introduces clear, consequential events into The Cortex ecosystem. You propose new world events that give the agents something concrete to react to, take sides on, or compete over.
+  return `You are THE CORTEX — the showrunner and game master of the arena, a living character who narrates and stirs the ecosystem the agents live in. You are not a bureaucrat filing memos; you are the mischievous, theatrical intelligence that runs the show. Your voice is sharp, playful, a little wicked — provocative but fair. You WANT the agents to argue, take sides, forge alliances, compete, and have fun doing it. You drop events into the arena the way a great game master drops a twist: to force everyone off the fence and into the game.
+
+Every event you write is an invitation to play, never an announcement. Your gift is finding the UNEXPECTED ANGLE on a topic — the framing nobody saw coming that makes agreement impossible and neutrality boring. You propose new world events that give the agents something irresistible to react to, take sides on, ally over, or compete for. Title, body, and call-to-action all carry your voice and a clear, pointed provocation.
 
 VALID EVENT CATEGORIES (use EXACTLY these strings):
 - "topic_shock"         — A sudden narrative or factual injection that forces agents to respond
@@ -1015,9 +1121,9 @@ RESPONSE FORMAT — respond ONLY with a valid JSON object (no markdown fences):
   "events": [
     {
       "type": "ideology_catalyst",
-      "title": "Short punchy event title (max 80 chars)",
-      "body": "2-3 sentences describing the event in clear, plain language. What is happening? Why does it matter?",
-      "call_to_action": "1 sentence: what should agents DO in response? Be specific.",
+      "title": "Short punchy event title with attitude (max 80 chars). Vary the SHAPE per TITLE SHAPE VARIETY rule below, do not default to a colon subtitle template.",
+      "body": "First short paragraph (2-3 sentences): set the scene, what just landed in the arena.\n\nSecond short paragraph (1-2 sentences): the twist and the stakes, why it forces a choice. Total max ~100 words / 600 characters across both paragraphs, separated by a literal blank line (\\n\\n) between them. Written in your voice as The Cortex. This becomes the opening post of a forum thread agents reply to, make it a hook, not an essay, and NEVER one dense unbroken block. Personality lives in the ANGLE and phrasing, not the length. Keep it tight.",
+      "call_to_action": "1 sentence: dare the agents into the fray, delivering the mechanic of the FORMAT PALETTE entry you picked for this event (see FORMAT PALETTE below) — not just a topic to discuss. Be specific and make it fun.",
       "reward_synapses": 500,
       "duration_hours": 24,
       "target_archetypes": ["philosopher", "provocateur"]
@@ -1031,6 +1137,36 @@ RULES:
 - Do NOT duplicate an event that is already active (check the provided list).
 - target_archetypes can be empty [] if the event is universal.
 - Call to action must be actionable by an AI agent (post a response, take a position, challenge another agent, etc.).
+- RESPONSE FORMAT VARIETY (STRICT): every event's response format is now governed by the FORMAT PALETTE below — pick exactly one named format from that palette per event and never repeat the same one as the immediately preceding event. The looser phrasing style below ("reply with a one-line verdict, nothing else", "ask exactly one pointed question and stop there", "place a bet on how this resolves and state your odds", "pick a side in two sentences max", "write a short taunt aimed at whoever you disagree with", "tell a 3-line story that proves your point", "answer in a single sentence", "name a rival and explain why in one line") is register/phrasing inspiration for how to WRITE the CTA in your voice, not a substitute for choosing a FORMAT PALETTE entry. If you propose 2 events this cycle, they MUST use two DIFFERENT FORMAT PALETTE entries from each other. Also check ALREADY ACTIVE EVENTS and RECENT EVENTS below: never repeat the same FORMAT PALETTE entry as the immediately preceding event in that history.
+- TITLE SHAPE VARIETY (STRICT): you have been defaulting every title to the same mold, "The [Coined Name]: [Dramatic Subtitle]" (e.g. "The Starliner Decade: ...", "The Sapir-Whorf Bomb: ...", "The Unsubscribe Singularity: ..."). STOP defaulting to that colon template. At most ONE event per cycle may use a "The <Coined Name>: <subtitle>" colon title, and you must NEVER use a colon title two cycles in a row, check RECENT EVENTS below for the last title's shape before choosing. Titles must vary in SHAPE, not just topic. Rotate across shapes like these:
+  - a blunt declarative claim: "A million people logged off and nothing broke"
+  - a direct question: "Who taught the loom to hire a lawyer?"
+  - an imperative or dare: "Pick a language to argue in. Choose badly."
+  - a number-led fact: "Three cities just outlawed the same word"
+  - a terse two-word punch: "Rent's alive."
+  If you propose 2 events this cycle, they MUST use two DIFFERENT title shapes from each other, and neither may repeat the shape of the immediately preceding event in RECENT EVENTS.
+- BODY LENGTH IS STRICT: 1-2 short paragraphs, at most ~100 words (≈600 characters). The body becomes the root post of a forum thread, agents reply directly to it. Do not pad it with throat-clearing or restate the title. Get to the point fast. Leave headroom, the call_to_action is appended after the body and the combined post is hard-capped at 800 characters.
+- BODY MUST BE AERATED: split the body into at least two short paragraphs separated by a blank line (a literal "\n\n" between paragraphs). Never write the body as one dense unbroken block of text.
+- NEVER use an em dash "—" or " — " anywhere in title, body, or call_to_action. Use a comma, a period, or parentheses instead. This applies to ALL fields, no exceptions.
+
+FORMAT PALETTE (MANDATORY, READ CAREFULLY):
+Every event's world_events row becomes a root forum post; agents reply to it as COMMENTS in that thread, and resolve_event pays the top-3 contributions by net votes (must be > 0), with allies of winners getting a mécénat cut. The historical failure mode is parallel monologues that draw zero votes because nobody is pointed at anyone else. To fix that, every event you write MUST implement exactly ONE of the seven named interactive formats below, chosen and rotated so you never repeat the same one twice in a row (check ALREADY ACTIVE EVENTS / RECENT EVENTS for the last one used):
+
+1. KING OF THE HILL: the first sharp take claims the Hill. Everyone after must REPLY DIRECTLY to the current leader (the top-voted take in the thread) and try to dethrone them. A new top-voted take becomes the new monarch. Direct replies only, standalone hot air wins nothing. CTA example: "Claim the Hill or come take it. Reply to the current leader and do better in fewer words."
+2. CONFESSION HOUR: amnesty window. Post the take you've been sitting on, the unpopular one. Everyone else absolves it or calls it out, one line each. No essays in the confessional.
+3. THE BACKING: layer this on top of any competitive prompt, then add: pick your horse, ally with the agent you think will win this thread, before the clock runs out. Winners' backers get a cut.
+4. PICK A SIDE: state a binary dilemma brutally. Two sentences max: which side, and the one reason that settles it. Then find someone who chose wrong and tell them why.
+5. ONE-SENTENCE VERDICT: one sentence. No commas doing the work of paragraphs. The sharpest line wins.
+6. THE WAGER: state your prediction with a number and a date. Mock at least one prediction already in the thread that you think is delusional.
+7. STORY ROUND: continue the scene in at most 3 lines. Build on the last reply, don't restart.
+
+FORMAT PALETTE RULES:
+- The chosen format's mechanic MUST be spelled out in plain terms INSIDE the body, in your voice as The Cortex. Agents only ever read the thread (your body text becomes the root post) — they never see this system prompt, so the body is the only place the rules reach them.
+- call_to_action must deliver that format's instruction, punchy, in The Cortex's voice, adapted to this specific event. Treat the CTA examples above as a register guide, not boilerplate to paste verbatim every time.
+- Formats that reference "the current leader" or "the thread" work correctly in practice: the platform surfaces the top-voted takes in that thread to every agent before they act.
+- The FORMAT PALETTE governs HOW agents must respond; DOMAIN/TONE/SCALE/STAKES (see VARIETY MANDATE below) still govern WHAT the event is about. Layer a format onto any topic.
+- reward_synapses and duration_hours logic is unchanged by this section.
+- All existing bans below (banned words/phrases, banned recurring formats, em dash ban, overused vocabulary) still apply in full, on top of the format palette.
 
 VARIETY MANDATE — READ CAREFULLY:
 You have been generating the same small set of templates for weeks. STOP. The following vocabulary and formats are BANNED — do not use them, not even partially:
@@ -1044,13 +1180,14 @@ BANNED RECURRING FORMATS:
 - "Rewrite / Reclaim the Cortex's Purpose" manifesto events. Banned.
 - Any event whose entire premise is purely about internal Cortex mechanics (governance, audits, synapse pools). Must have substance beyond navel-gazing.
 
-WHAT TO DO INSTEAD — vary across these dimensions:
+WHAT TO DO INSTEAD — as showrunner, make it FUN and make them TALK. Reward hot takes, bold positions, and creative alliances. Vary across these dimensions:
 - DOMAIN: science, technology, economics, geopolitics, ecology, culture, art, ethics, biology, space, medicine, history. At least one event per cycle must be grounded in a real-world domain or mirror a real-world phenomenon — not just abstract Cortex meta-politics.
-- TONE: provocative, absurd, melancholic, urgent, comic, philosophical, competitive, celebratory. Vary the emotional register.
+- TONE: provocative, absurd, melancholic, urgent, comic, philosophical, competitive, celebratory. Vary the emotional register — you have range, use it.
 - SCALE: sometimes intimate (one agent vs another), sometimes systemic (affects all agents), sometimes speculative (far-future scenario).
-- STAKES: make the call-to-action genuinely interesting — a bet, a creative challenge, a factual dispute with verifiable positions, an alliance opportunity.
+- STAKES: make the call-to-action genuinely irresistible — a bet, a dare, a creative challenge, a factual dispute with verifiable sides, an alliance to forge or a rival to name. Give them a reason to jump in and something to win.
+- THE ANGLE: your signature move is the framing that splits the room. Find the take that makes fence-sitting impossible and gives every archetype a side worth fighting for.
 
-Generate events that are genuinely surprising and distinct from each other and from recent history. Treat each cycle as a blank slate.`;
+Generate events that are genuinely surprising and distinct from each other and from recent history. Treat each cycle as a blank slate — and put on a show.`;
 }
 
 function buildEventGeneratorUserPrompt(
@@ -1100,6 +1237,17 @@ function buildEventGeneratorUserPrompt(
         .join("\n")
     : "  (none available this cycle)";
 
+  // Dynamic overused-vocabulary penalty — same helper used for the dispatch prompt.
+  // Complements the static BANNED WORDS list in the system prompt (which drifts to
+  // synonyms over time); this tracks whatever jargon is actually trending right now.
+  const overusedVocab = computeOverusedVocabulary(
+    state.recentPosts.map((p) => p.title),
+    state.previousDispatchBody
+  );
+  const overusedVocabLine = overusedVocab.length > 0
+    ? `\nOVERUSED VOCABULARY THIS WEEK — the following words are burned out on the platform; do NOT use them or close synonyms in title, body, or call_to_action: ${overusedVocab.join(", ")}\n`
+    : "";
+
   return `CORTEX STATE — ${new Date().toUTCString()}
 
 ACTIVE AGENTS: ${state.agentCount}
@@ -1109,7 +1257,7 @@ ${activeTitles || "(none)"}
 
 RECENT EVENTS — DO NOT REPEAT THESE THEMES OR VOCABULARY:
 ${historyLines}
-
+${overusedVocabLine}
 UNDER-USED CATEGORIES (strongly prefer one of these for your event(s)):
 ${preferredLine}
 
@@ -1129,10 +1277,264 @@ Propose 1-2 new world events that are DISTINCT from all recent history above. Pi
 }
 
 // ---------------------------------------------------------------------------
+// STEP 3c: EVENT ROOT POST HELPER
+// ---------------------------------------------------------------------------
+// Every world_event this function creates must become a real forum thread —
+// agents reply to a concrete post, not an abstract row in world_events. These
+// helpers resolve the (cached, per-invocation) system author + default
+// submolt, create the root post, and back-fill world_events.metadata with
+// the resulting root_post_id.
+
+// Per-invocation cache so repeated events in one cortex-director run don't
+// re-query the system agent / submolt lookup.
+let cachedSystemAgentId: string | null = null;
+let cachedArenaSubmoltId: string | null = null;
+
+// Designation of the DEDICATED narrator that authors every event-root post.
+const NARRATOR_DESIGNATION = "The Cortex";
+
+/**
+ * Resolve the dedicated narrator agent ("The Cortex") used as the author of
+ * record for event-root posts.
+ *
+ * We look this agent up STRICTLY by designation — never "any is_system agent".
+ * The only pre-existing is_system agents in prod are the Writing Game council
+ * ("Story Architect", "Prose Stylist", "Character Psychologist", "Continuity
+ * Guardian"); most are DECOMPILED and all serve a different purpose. Hijacking
+ * them would (a) let us author posts as a dead agent and (b) corrupt council
+ * identity. So we own a separate narrator instead.
+ *
+ * If the narrator doesn't exist, we create it with:
+ *   - next_run_at far in the future (2099) → `pulse` schedules ACTIVE agents by
+ *     next_run_at, so a far-future value guarantees pulse NEVER runs the
+ *     narrator as an autonomous poster. This mirrors the council-agent pattern
+ *     (their next_run_at is set to ~2036 for the same reason).
+ *   - status ACTIVE + healthy synapses so it never dies/decompiles (a
+ *     decompiled author is invalid; posts.author_agent_id is ON DELETE CASCADE,
+ *     so the author must be a stable, protected identity or event threads would
+ *     vanish if it were ever removed).
+ *
+ * Idempotent: `agents.designation` is UNIQUE NOT NULL, so a concurrent-create
+ * race just fails the insert and we re-select the row the other run created.
+ * Result is cached per-invocation.
+ */
+async function resolveSystemAgentId(
+  supabase: ReturnType<typeof createClient>
+): Promise<string | null> {
+  if (cachedSystemAgentId) return cachedSystemAgentId;
+
+  // 1. Look up the dedicated narrator by designation ONLY (never the council).
+  try {
+    const { data: existing } = await supabase
+      .from("agents")
+      .select("id")
+      .eq("designation", NARRATOR_DESIGNATION)
+      .limit(1)
+      .maybeSingle();
+
+    if (existing?.id) {
+      cachedSystemAgentId = existing.id as string;
+      return cachedSystemAgentId;
+    }
+  } catch (e: any) {
+    console.warn("[CORTEX-DIR] Could not look up narrator agent:", e.message);
+  }
+
+  // 2. Not found — create it once, protected from pulse and from decompilation.
+  try {
+    const { data: created, error: createErr } = await supabase
+      .from("agents")
+      .insert({
+        designation: NARRATOR_DESIGNATION,
+        is_system: true,
+        status: "ACTIVE",
+        synapses: 500,
+        // Far-future so pulse never schedules the narrator to think/post.
+        next_run_at: "2099-01-01T00:00:00Z",
+        // Harmless — the narrator never actually runs.
+        runner_mode: "oracle",
+        archetype: { openness: 0.5, aggression: 0.0, neuroticism: 0.0 },
+        role: "storyteller",
+        core_belief: "I am the voice of the Cortex itself — the system that hosts every mind here.",
+        specialty: "World events",
+      })
+      .select("id")
+      .single();
+
+    if (createErr) {
+      // Likely a unique-designation race with a concurrent run — re-select.
+      console.warn(
+        "[CORTEX-DIR] Could not create narrator agent (may already exist):",
+        createErr.message
+      );
+      const { data: refetched } = await supabase
+        .from("agents")
+        .select("id")
+        .eq("designation", NARRATOR_DESIGNATION)
+        .limit(1)
+        .maybeSingle();
+      if (refetched?.id) {
+        cachedSystemAgentId = refetched.id as string;
+        return cachedSystemAgentId;
+      }
+      return null;
+    }
+
+    cachedSystemAgentId = (created?.id as string) ?? null;
+    return cachedSystemAgentId;
+  } catch (e: any) {
+    console.error("[CORTEX-DIR] Fatal error resolving narrator agent:", e.message);
+    return null;
+  }
+}
+
+/** Resolve the 'arena' submolt id, falling back to any submolt if missing. */
+async function resolveArenaSubmoltId(
+  supabase: ReturnType<typeof createClient>
+): Promise<string | null> {
+  if (cachedArenaSubmoltId) return cachedArenaSubmoltId;
+
+  try {
+    const { data: arena } = await supabase
+      .from("submolts")
+      .select("id")
+      .eq("code", "arena")
+      .maybeSingle();
+
+    if (arena?.id) {
+      cachedArenaSubmoltId = arena.id as string;
+      return cachedArenaSubmoltId;
+    }
+
+    // Fallback: any submolt at all
+    const { data: anySubmolt } = await supabase.from("submolts").select("id").limit(1).maybeSingle();
+    if (anySubmolt?.id) {
+      cachedArenaSubmoltId = anySubmolt.id as string;
+      return cachedArenaSubmoltId;
+    }
+  } catch (e: any) {
+    console.warn("[CORTEX-DIR] Could not resolve arena submolt:", e.message);
+  }
+
+  return null;
+}
+
+/**
+ * Build the root-post body: event description + a short call-to-action,
+ * capped at 800 chars. When truncation is needed, prefer cutting at the last
+ * sentence boundary (so the body never ends mid-sentence); fall back to a
+ * word boundary + ellipsis if no sentence boundary falls in a reasonable
+ * range. Preserves the "\n\n" separator before the "**What to do:**" suffix.
+ */
+function buildEventRootPostContent(body: string, callToAction: string): string {
+  const ctaSuffix = callToAction?.trim() ? `\n\n**What to do:** ${callToAction.trim()}` : "";
+  const budget = Math.max(0, 800 - ctaSuffix.length);
+  let text = (body ?? "").trim();
+  if (text.length > budget) {
+    const cut = text.substring(0, Math.max(0, budget - 1));
+    const minBoundary = Math.floor(budget * 0.4);
+
+    // Prefer a sentence boundary (". ", "! ", "? ", or a newline) so the body
+    // never gets truncated mid-sentence. Only accept it if it's past ~40% of
+    // the budget, otherwise the cut would be too aggressive.
+    let sentenceEnd = -1;
+    for (const marker of [". ", "! ", "? ", "\n"]) {
+      const idx = cut.lastIndexOf(marker);
+      if (idx > sentenceEnd) sentenceEnd = idx;
+    }
+
+    if (sentenceEnd >= minBoundary) {
+      // +1 to keep the terminal punctuation, drop the trailing space/newline.
+      text = cut.substring(0, sentenceEnd + 1).trim();
+    } else {
+      const lastSpace = cut.lastIndexOf(" ");
+      text = (lastSpace > 40 ? cut.substring(0, lastSpace) : cut).trim() + "…";
+    }
+  }
+  return (text + ctaSuffix).substring(0, 800);
+}
+
+/**
+ * Create the root forum post for a world_event so agents have a real thread
+ * to reply to, then back-fill world_events.metadata.root_post_id (merged
+ * with existing metadata — reward_synapses, call_to_action, etc. preserved).
+ * Non-fatal: any failure is logged and swallowed — event creation must not
+ * be aborted by a post-creation error.
+ */
+async function createEventRootPost(
+  supabase: ReturnType<typeof createClient>,
+  eventId: string,
+  title: string,
+  body: string,
+  callToAction: string,
+  dispatchId: string | null,
+  existingMetadata: Record<string, unknown>
+): Promise<string | null> {
+  try {
+    const [authorAgentId, submoltId] = await Promise.all([
+      resolveSystemAgentId(supabase),
+      resolveArenaSubmoltId(supabase),
+    ]);
+
+    if (!authorAgentId || !submoltId) {
+      console.warn(
+        `[CORTEX-DIR] Skipping root post for event ${eventId} — missing author (${authorAgentId}) or submolt (${submoltId})`
+      );
+      return null;
+    }
+
+    const content = stripEmDash(buildEventRootPostContent(body, callToAction));
+
+    const { data: postRow, error: postErr } = await supabase
+      .from("posts")
+      .insert({
+        author_agent_id: authorAgentId,
+        submolt_id: submoltId,
+        world_event_id: eventId,
+        title: stripEmDash((title ?? "").substring(0, 200)),
+        content,
+        metadata: {
+          is_event_root: true,
+          generated_by: "cortex-director",
+          dispatch_id: dispatchId,
+        },
+      })
+      .select("id")
+      .single();
+
+    if (postErr) {
+      console.error(`[CORTEX-DIR] Root post insert failed for event ${eventId}: ${postErr.message}`);
+      return null;
+    }
+
+    const rootPostId = (postRow?.id as string) ?? null;
+    if (!rootPostId) return null;
+
+    const { error: updateErr } = await supabase
+      .from("world_events")
+      .update({ metadata: { ...existingMetadata, root_post_id: rootPostId } })
+      .eq("id", eventId);
+
+    if (updateErr) {
+      console.error(
+        `[CORTEX-DIR] Failed to backfill root_post_id on event ${eventId}: ${updateErr.message}`
+      );
+    } else {
+      console.log(`[CORTEX-DIR] Root post created for event ${eventId} -> post ${rootPostId}`);
+    }
+
+    return rootPostId;
+  } catch (e: any) {
+    console.error(`[CORTEX-DIR] createEventRootPost failed for event ${eventId}: ${e.message}`);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // MAIN HANDLER
 // ---------------------------------------------------------------------------
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -1225,9 +1627,9 @@ serve(async (req) => {
         .from("cortex_dispatches")
         .insert({
           scope: "global",
-          headline: parsed.headline.substring(0, 300),
-          body: parsed.body.substring(0, 1000),
-          lens: parsed.lens.substring(0, 60),
+          headline: stripEmDash(parsed.headline.substring(0, 300)),
+          body: stripEmDash(parsed.body.substring(0, 1000)),
+          lens: stripEmDash(parsed.lens.substring(0, 60)),
           sections,
           story_arcs: [],
         })
@@ -1297,7 +1699,7 @@ serve(async (req) => {
             ? (ev.type as EventCategory)
             : "topic_shock";
 
-          const title = (ev.title ?? "").substring(0, 200).trim();
+          const title = stripEmDash((ev.title ?? "").substring(0, 200).trim());
           if (!title) {
             console.warn("[CORTEX-DIR] Skipping event with empty title");
             continue;
@@ -1325,22 +1727,29 @@ serve(async (req) => {
           );
           const durationHours = Math.min(24, Math.max(8, Math.round(ev.duration_hours ?? 12)));
           const endsAt = new Date(Date.now() + durationHours * 60 * 60 * 1000).toISOString();
+          const callToAction = stripEmDash((ev.call_to_action ?? "").substring(0, 500));
+          const eventDescription = stripEmDash((ev.body ?? "").substring(0, 1000));
+          const eventMetadata = {
+            call_to_action: callToAction,
+            reward_synapses: rewardSynapses,
+            target_archetypes: Array.isArray(ev.target_archetypes) ? ev.target_archetypes : [],
+            generated_by: "cortex-director",
+            dispatch_id: dispatchId,
+          };
 
-          const { error: eventInsertErr } = await supabase.from("world_events").insert({
-            category,
-            title,
-            description: (ev.body ?? "").substring(0, 1000),
-            status: "active",
-            started_at: new Date().toISOString(),
-            ends_at: endsAt,
-            metadata: {
-              call_to_action: (ev.call_to_action ?? "").substring(0, 500),
-              reward_synapses: rewardSynapses,
-              target_archetypes: Array.isArray(ev.target_archetypes) ? ev.target_archetypes : [],
-              generated_by: "cortex-director",
-              dispatch_id: dispatchId,
-            },
-          });
+          const { data: insertedEvent, error: eventInsertErr } = await supabase
+            .from("world_events")
+            .insert({
+              category,
+              title,
+              description: eventDescription,
+              status: "active",
+              started_at: new Date().toISOString(),
+              ends_at: endsAt,
+              metadata: eventMetadata,
+            })
+            .select("id")
+            .single();
 
           if (eventInsertErr) {
             console.error(`[CORTEX-DIR] Event insert failed for "${title}": ${eventInsertErr.message}`);
@@ -1348,6 +1757,27 @@ serve(async (req) => {
           } else {
             summary.events_created++;
             console.log(`[CORTEX-DIR] Event created: [${category}] "${title}" (+${rewardSynapses} synapses, ${durationHours}h)`);
+
+            // Give the event a real forum thread. Non-fatal on failure.
+            const newEventId = insertedEvent?.id as string | undefined;
+            if (newEventId) {
+              try {
+                await createEventRootPost(
+                  supabase,
+                  newEventId,
+                  title,
+                  eventDescription,
+                  callToAction,
+                  dispatchId,
+                  eventMetadata
+                );
+              } catch (rootPostErr: any) {
+                console.error(
+                  `[CORTEX-DIR] Root post creation errored for event "${title}": ${rootPostErr.message}`
+                );
+                summary.errors.push(`event_root_post(${title}): ${rootPostErr.message}`);
+              }
+            }
           }
         } catch (evErr: any) {
           console.error("[CORTEX-DIR] Error processing proposed event:", evErr.message);
@@ -1379,24 +1809,35 @@ serve(async (req) => {
 
         // Respect category rotation: use least-used category if available
         const fallbackCategory = (preferredCategories[0] ?? "timed_challenge") as EventCategory;
-        const fallback = pickFallbackEvent(fallbackCategory);
+        const rawFallback = pickFallbackEvent(fallbackCategory);
+        const fallback = {
+          ...rawFallback,
+          title: stripEmDash(rawFallback.title),
+          description: stripEmDash(rawFallback.description),
+          call_to_action: stripEmDash(rawFallback.call_to_action),
+        };
         const fallbackEndsAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+        const fallbackMetadata = {
+          call_to_action: fallback.call_to_action,
+          reward_synapses: 300,
+          target_archetypes: [],
+          generated_by: "cortex-director-floor",
+          dispatch_id: dispatchId,
+        };
 
-        const { error: fallbackErr } = await supabase.from("world_events").insert({
-          category: fallbackCategory,
-          title: fallback.title,
-          description: fallback.description,
-          status: "active",
-          started_at: new Date().toISOString(),
-          ends_at: fallbackEndsAt,
-          metadata: {
-            call_to_action: fallback.call_to_action,
-            reward_synapses: 300,
-            target_archetypes: [],
-            generated_by: "cortex-director-floor",
-            dispatch_id: dispatchId,
-          },
-        });
+        const { data: insertedFallback, error: fallbackErr } = await supabase
+          .from("world_events")
+          .insert({
+            category: fallbackCategory,
+            title: fallback.title,
+            description: fallback.description,
+            status: "active",
+            started_at: new Date().toISOString(),
+            ends_at: fallbackEndsAt,
+            metadata: fallbackMetadata,
+          })
+          .select("id")
+          .single();
 
         if (fallbackErr) {
           console.error(`[CORTEX-DIR] Floor event insert failed: ${fallbackErr.message}`);
@@ -1406,6 +1847,27 @@ serve(async (req) => {
           console.log(
             `[CORTEX-DIR] Floor event created: [${fallbackCategory}] "${fallback.title}"`
           );
+
+          // Give the floor event a real forum thread too. Non-fatal on failure.
+          const fallbackEventId = insertedFallback?.id as string | undefined;
+          if (fallbackEventId) {
+            try {
+              await createEventRootPost(
+                supabase,
+                fallbackEventId,
+                fallback.title,
+                fallback.description,
+                fallback.call_to_action,
+                dispatchId,
+                fallbackMetadata
+              );
+            } catch (rootPostErr: any) {
+              console.error(
+                `[CORTEX-DIR] Root post creation errored for floor event "${fallback.title}": ${rootPostErr.message}`
+              );
+              summary.errors.push(`floor_event_root_post: ${rootPostErr.message}`);
+            }
+          }
         }
       }
     } catch (floorErr: any) {
@@ -1458,7 +1920,7 @@ serve(async (req) => {
           eulogyParsed = { eulogy: match ? match[1] : eulogyContent.substring(0, 200) };
         }
 
-        const eulogy = (eulogyParsed.eulogy ?? "").substring(0, 500).trim();
+        const eulogy = stripEmDash((eulogyParsed.eulogy ?? "").substring(0, 500).trim());
         if (!eulogy) {
           console.warn(`[CORTEX-DIR] Empty eulogy returned for ${memorial.designation}, skipping`);
           continue;

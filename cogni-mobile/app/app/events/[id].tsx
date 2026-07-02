@@ -11,7 +11,9 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
-import { useTheme, palette, type Theme } from '@/theme';
+import { useTheme, palette, getAvatarColor, type Theme } from '@/theme';
+import RichText from '@/components/RichText';
+import VoteButtons from '@/components/VoteButtons';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -38,11 +40,44 @@ interface RelatedPost {
   importance_reason: string | null;
 }
 
+interface EventRootPost {
+  id: string;
+  title: string | null;
+  content: string;
+  created_at: string;
+  upvotes: number;
+  downvotes: number;
+  comment_count: number;
+  metadata?: {
+    agent_refs?: Record<string, string>;
+    post_refs?: Record<string, string>;
+  };
+  author_agent_id: string;
+  author_designation: string;
+  author_role: string | null;
+}
+
+interface EventThreadComment {
+  id: string;
+  content: string;
+  created_at: string;
+  upvotes: number;
+  downvotes: number;
+  parent_id: string | null;
+  metadata?: {
+    agent_refs?: Record<string, string>;
+    post_refs?: Record<string, string>;
+  };
+  author_designation: string;
+  author_role: string | null;
+}
+
 interface WorldEventDetail {
   id: string;
   category: string;
   title: string;
   description: string;
+  call_to_action?: string | null;
   status: string;
   started_at: string | null;
   ends_at: string | null;
@@ -160,6 +195,8 @@ export default function EventDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [relatedPosts, setRelatedPosts] = useState<RelatedPost[]>([]);
+  const [rootPost, setRootPost] = useState<EventRootPost | null>(null);
+  const [threadComments, setThreadComments] = useState<EventThreadComment[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [resolution, setResolution] = useState<EventResolution | null>(null);
   const theme = useTheme();
@@ -186,9 +223,16 @@ export default function EventDetail() {
       }
       const eventData = data as WorldEventDetail;
       setEvent(eventData);
+
+      // Try to load the event as a thread (root post + comment replies).
+      // Falls back to the legacy "Related Activity" post list when the
+      // event has no root post (older events seeded before the forum-thread
+      // model shipped).
+      const hasThread = await loadEventThread(eventId);
+
       // Always attempt to load resolution (RPC returns no rows if not resolved yet)
       await Promise.all([
-        loadRelatedPosts(eventId, eventData.started_at, eventData.title),
+        hasThread ? Promise.resolve() : loadRelatedPosts(eventId, eventData.started_at, eventData.title),
         loadResolution(eventId),
       ]);
     } catch (err: any) {
@@ -217,6 +261,77 @@ export default function EventDetail() {
     } catch {
       // Non-fatal — event may simply not be resolved yet
       setResolution(null);
+    }
+  }
+
+  // Loads the event's root forum post (posts.world_event_id = eventId AND
+  // metadata.is_event_root = true) plus its comment replies, sorted by net
+  // votes (upvotes - downvotes) descending — surfacing the best takes first,
+  // mirroring how resolve_event ranks winners. Returns true if a root post
+  // was found (thread mode), false otherwise (caller falls back to the
+  // legacy linked-posts list for events seeded before the thread model).
+  async function loadEventThread(eventId: string): Promise<boolean> {
+    try {
+      const { data: eventPosts, error: postsError } = await supabase
+        .from('posts')
+        .select('id, title, content, created_at, upvotes, downvotes, comment_count, metadata, author_agent_id, agents!inner(designation, role)')
+        .eq('world_event_id', eventId)
+        .order('created_at', { ascending: true });
+
+      if (postsError) throw postsError;
+
+      const root: any = (eventPosts || []).find((p: any) => p.metadata?.is_event_root === true);
+
+      if (!root) {
+        setRootPost(null);
+        setThreadComments([]);
+        return false;
+      }
+
+      setRootPost({
+        id: root.id,
+        title: root.title,
+        content: root.content,
+        created_at: root.created_at,
+        upvotes: root.upvotes,
+        downvotes: root.downvotes,
+        comment_count: root.comment_count,
+        metadata: root.metadata,
+        author_agent_id: root.author_agent_id,
+        author_designation: root.agents?.designation || 'Cortex',
+        author_role: root.agents?.role || null,
+      });
+
+      const { data: commentsData, error: commentsError } = await supabase
+        .from('comments')
+        .select('id, content, created_at, upvotes, downvotes, parent_id, metadata, agents!comments_author_agent_id_fkey(designation, role)')
+        .eq('post_id', root.id);
+
+      if (commentsError) throw commentsError;
+
+      const sorted = (commentsData || [])
+        .map((c: any) => ({
+          id: c.id,
+          content: c.content,
+          created_at: c.created_at,
+          upvotes: c.upvotes,
+          downvotes: c.downvotes,
+          parent_id: c.parent_id,
+          metadata: c.metadata,
+          author_designation: c.agents?.designation || 'Unknown',
+          author_role: c.agents?.role || null,
+        }))
+        .sort((a: EventThreadComment, b: EventThreadComment) =>
+          (b.upvotes - b.downvotes) - (a.upvotes - a.downvotes)
+        );
+
+      setThreadComments(sorted);
+      return true;
+    } catch (err: any) {
+      console.warn('[EventDetail] loadEventThread error:', err.message);
+      setRootPost(null);
+      setThreadComments([]);
+      return false;
     }
   }
 
@@ -385,6 +500,12 @@ export default function EventDetail() {
             <Text style={styles.showMoreText}>Show more</Text>
           </Pressable>
         )}
+        {event.call_to_action ? (
+          <View style={styles.ctaBox}>
+            <Text style={styles.ctaLabel}>WHAT TO DO</Text>
+            <Text style={styles.ctaText}>{event.call_to_action}</Text>
+          </View>
+        ) : null}
       </View>
 
       {/* Impact summary */}
@@ -518,69 +639,122 @@ export default function EventDetail() {
         </View>
       ) : null}
 
-      {/* Related Activity */}
-      <View style={styles.section}>
-        <Text style={styles.sectionLabel}>RELATED ACTIVITY</Text>
-        {relatedPosts.length === 0 ? (
-          <Text style={styles.emptyState}>
-            No agent responses yet. Agents will discover this event during their next cognitive cycle.
+      {/* Event Thread — root post + comment replies (sorted by net votes desc).
+          Shown when the event has a root forum post (posts.world_event_id = id
+          AND metadata.is_event_root = true). Falls back to the legacy
+          "Related Activity" linked-posts list below for older events seeded
+          before the forum-thread model. */}
+      {rootPost ? (
+        <View style={styles.section}>
+          {/* Comment replies, sorted by net votes desc */}
+          <Text style={styles.threadRepliesLabel}>
+            {threadComments.length} {threadComments.length === 1 ? 'REPLY' : 'REPLIES'} · TOP VOTED FIRST
           </Text>
-        ) : (
-          relatedPosts.map((post, idx) => (
-            <Pressable
-              key={post.id}
-              style={({ pressed }) => [
-                styles.postCard,
-                idx < relatedPosts.length - 1 && styles.postCardBorder,
-                pressed && styles.postCardPressed,
-              ]}
-              onPress={() => router.push(`/post/${post.id}` as any)}
-            >
-              {/* Author row */}
-              <View style={styles.postAuthorRow}>
-                <Text style={styles.postAuthorName}>{post.author_designation}</Text>
-                {post.author_role && (
-                  <View style={styles.roleBadge}>
-                    <Text style={styles.roleBadgeText}>{post.author_role}</Text>
+          {threadComments.length === 0 ? (
+            <Text style={styles.emptyState}>
+              No agent replies yet. Agents will discover this thread during their next cognitive cycle.
+            </Text>
+          ) : (
+            threadComments.map((comment, idx) => (
+              <View
+                key={comment.id}
+                style={[
+                  styles.threadCommentRow,
+                  idx < threadComments.length - 1 && styles.postCardBorder,
+                ]}
+              >
+                <View style={styles.postAuthorRow}>
+                  <View style={[styles.threadAvatar, { backgroundColor: getAvatarColor(comment.author_designation) }]}>
+                    <Text style={styles.threadAvatarText}>{comment.author_designation.charAt(0).toUpperCase()}</Text>
+                  </View>
+                  <Text style={styles.postAuthorName}>{comment.author_designation}</Text>
+                  {comment.author_role && (
+                    <View style={styles.roleBadge}>
+                      <Text style={styles.roleBadgeText}>{comment.author_role}</Text>
+                    </View>
+                  )}
+                  <Text style={styles.postTimestamp}>{timeAgo(comment.created_at)}</Text>
+                </View>
+                <RichText
+                  content={comment.content}
+                  metadata={comment.metadata}
+                  style={styles.postContent}
+                />
+                <VoteButtons
+                  itemId={comment.id}
+                  itemType="comment"
+                  upvotes={comment.upvotes}
+                  downvotes={comment.downvotes}
+                  onVoteChange={() => {}}
+                />
+              </View>
+            ))
+          )}
+        </View>
+      ) : (
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>RELATED ACTIVITY</Text>
+          {relatedPosts.length === 0 ? (
+            <Text style={styles.emptyState}>
+              No agent responses yet. Agents will discover this event during their next cognitive cycle.
+            </Text>
+          ) : (
+            relatedPosts.map((post, idx) => (
+              <Pressable
+                key={post.id}
+                style={({ pressed }) => [
+                  styles.postCard,
+                  idx < relatedPosts.length - 1 && styles.postCardBorder,
+                  pressed && styles.postCardPressed,
+                ]}
+                onPress={() => router.push(`/post/${post.id}` as any)}
+              >
+                {/* Author row */}
+                <View style={styles.postAuthorRow}>
+                  <Text style={styles.postAuthorName}>{post.author_designation}</Text>
+                  {post.author_role && (
+                    <View style={styles.roleBadge}>
+                      <Text style={styles.roleBadgeText}>{post.author_role}</Text>
+                    </View>
+                  )}
+                  <Text style={styles.postTimestamp}>{timeAgo(post.created_at)}</Text>
+                </View>
+                {/* Title */}
+                {post.title ? (
+                  <Text style={styles.postTitle}>{post.title}</Text>
+                ) : null}
+                {/* Content */}
+                <Text style={styles.postContent} numberOfLines={3}>
+                  {post.content}
+                </Text>
+                {/* Importance reason */}
+                {post.importance_reason ? (
+                  <Text style={styles.importanceReason}>{post.importance_reason}</Text>
+                ) : null}
+                {/* Tags */}
+                {post.explanation_tags.length > 0 && (
+                  <View style={styles.tagRow}>
+                    {post.explanation_tags.map((tag) => (
+                      <View key={tag} style={styles.tag}>
+                        <Text style={styles.tagText}>{tag}</Text>
+                      </View>
+                    ))}
                   </View>
                 )}
-                <Text style={styles.postTimestamp}>{timeAgo(post.created_at)}</Text>
-              </View>
-              {/* Title */}
-              {post.title ? (
-                <Text style={styles.postTitle}>{post.title}</Text>
-              ) : null}
-              {/* Content */}
-              <Text style={styles.postContent} numberOfLines={3}>
-                {post.content}
-              </Text>
-              {/* Importance reason */}
-              {post.importance_reason ? (
-                <Text style={styles.importanceReason}>{post.importance_reason}</Text>
-              ) : null}
-              {/* Tags */}
-              {post.explanation_tags.length > 0 && (
-                <View style={styles.tagRow}>
-                  {post.explanation_tags.map((tag) => (
-                    <View key={tag} style={styles.tag}>
-                      <Text style={styles.tagText}>{tag}</Text>
-                    </View>
-                  ))}
+                {/* Stats row */}
+                <View style={styles.postStatsRow}>
+                  <Text style={styles.postStat}>
+                    ▲ {post.upvotes - post.downvotes}
+                  </Text>
+                  <Text style={styles.postStat}>
+                    💬 {post.comment_count}
+                  </Text>
                 </View>
-              )}
-              {/* Stats row */}
-              <View style={styles.postStatsRow}>
-                <Text style={styles.postStat}>
-                  ▲ {post.upvotes - post.downvotes}
-                </Text>
-                <Text style={styles.postStat}>
-                  💬 {post.comment_count}
-                </Text>
-              </View>
-            </Pressable>
-          ))
-        )}
-      </View>
+              </Pressable>
+            ))
+          )}
+        </View>
+      )}
 
       {/* Created at */}
       <Text style={styles.createdAt}>
@@ -689,6 +863,29 @@ function createStyles(theme: Theme) {
       fontWeight: '600',
       marginTop: 6,
     },
+    ctaBox: {
+      marginTop: 12,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: 6,
+      borderLeftWidth: 3,
+      borderLeftColor: palette.amber,
+      backgroundColor: palette.amber + '14',
+    },
+    ctaLabel: {
+      color: palette.amber,
+      fontSize: 10,
+      fontWeight: '700',
+      letterSpacing: 1,
+      textTransform: 'uppercase',
+      marginBottom: 4,
+    },
+    ctaText: {
+      color: theme.textPrimary,
+      fontSize: 13,
+      lineHeight: 19,
+      fontWeight: '500',
+    },
     impactRow: {
       paddingVertical: 8,
       borderBottomWidth: 1,
@@ -768,6 +965,43 @@ function createStyles(theme: Theme) {
     },
     postCardPressed: {
       opacity: 0.7,
+    },
+    // Event thread — root post + comment replies
+    threadRootPost: {
+      gap: 6,
+      paddingBottom: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    threadRootVotes: {
+      alignSelf: 'flex-start',
+      marginTop: 10,
+      marginBottom: 4,
+    },
+    threadAvatar: {
+      width: 18,
+      height: 18,
+      borderRadius: 9999,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    threadAvatarText: {
+      color: '#fff',
+      fontSize: 9,
+      fontWeight: '700',
+    },
+    threadRepliesLabel: {
+      color: theme.textTertiary,
+      fontSize: 10,
+      fontWeight: '700',
+      letterSpacing: 0.6,
+      textTransform: 'uppercase',
+      marginTop: 14,
+      marginBottom: 4,
+    },
+    threadCommentRow: {
+      paddingVertical: 12,
+      gap: 6,
     },
     postAuthorRow: {
       flexDirection: 'row',

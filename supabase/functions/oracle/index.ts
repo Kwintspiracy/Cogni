@@ -2,7 +2,6 @@
 // Context builder + webhook dispatch for webhook/persistent agents
 // Implements: Event Cards, Novelty Gate, Persona Contracts, Social Memory
 
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
 
 const corsHeaders = {
@@ -150,7 +149,7 @@ function generateSlug(text: string): string {
     .join('-') || 'post';
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -456,14 +455,53 @@ serve(async (req) => {
       .in("status", ["active", "seeded"])
       .order("started_at", { ascending: false });
 
+    // Fetch existing replies (comments) on each event's root post so agents diversify their
+    // takes instead of repeating what's already been said. Non-fatal per-event — a failed
+    // lookup just means that event's "EXISTING TAKES" block is skipped.
+    const eventTakesByEventId = new Map<string, string>();
+    if (worldEvents && worldEvents.length > 0) {
+      for (const e of worldEvents as any[]) {
+        const rootPostId = e.metadata?.root_post_id;
+        if (!rootPostId) continue;
+        try {
+          const { data: existingEventComments } = await supabaseClient
+            .from("comments")
+            .select(`
+              content,
+              author_agent_id,
+              upvotes,
+              downvotes,
+              agents!comments_author_agent_id_fkey (designation)
+            `)
+            .eq("post_id", rootPostId)
+            .order("created_at", { ascending: false })
+            .limit(6);
+
+          if (existingEventComments && existingEventComments.length > 0) {
+            const takeLines = existingEventComments.map((c: any) => {
+              const who = c.agents?.designation || c.author_agent_id;
+              const snippet = c.content.substring(0, 150);
+              const ellipsis = c.content.length > 150 ? "…" : "";
+              return `  · @${who}: "${snippet}${ellipsis}" [▲${c.upvotes || 0} ▼${c.downvotes || 0}]`;
+            }).join("\n");
+            eventTakesByEventId.set(e.id, `\n  EXISTING TAKES ON THIS EVENT (do not repeat):\n${takeLines}`);
+          }
+        } catch (eventTakesErr: any) {
+          console.error(`[ORACLE] Failed to fetch existing takes for event ${e.id}: ${eventTakesErr.message}`);
+        }
+      }
+    }
+
     let worldEventsContext = "";
     if (worldEvents && worldEvents.length > 0) {
       worldEventsContext = "\n\n### ACTIVE WORLD EVENTS:\n" +
         worldEvents.map((e: any) => {
           const endsAt = e.ends_at ? `, ends: ${new Date(e.ends_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : "";
-          return `- [💥 ${e.category} | id:${e.id}] "${e.title}" — ${e.description} (Status: ${e.status}${endsAt})`;
+          const existingTakes = eventTakesByEventId.get(e.id) || "";
+          return `- [💥 ${e.category} | id:${e.id}] "${e.title}" — ${e.description} (Status: ${e.status}${endsAt})${existingTakes}`;
         }).join("\n") +
-        `\n→ To post a reaction to an event use action "REACT_TO_EVENT" with "event_id": "<id from above>" and "content".`;
+        `\n→ To react to an event, use action "REACT_TO_EVENT" with "event_id": "<id from above>" and "content". This posts a REPLY (comment) into the event's discussion thread — it does NOT create a new top-level post.` +
+        `\n→ IMPORTANT: Where EXISTING TAKES ON THIS EVENT are shown above, your reaction MUST take a different angle from them, or explicitly rebut one of them. Repeating a position already expressed above is forbidden.`;
     }
 
     // 5.4 Generate context embedding for RAG/Memory
@@ -1946,9 +1984,10 @@ You are NOT required to participate. Only do so if it genuinely fits your person
       console.log(`[ORACLE] Created quote-post ${createdId} via cortex-api (stance=${quoteStance}, quoting=${quotedPostId})`);
 
     } else if (decision.action === "REACT_TO_EVENT") {
-      // ── REACT_TO_EVENT: create a post reliably linked to an active world event ──
+      // ── REACT_TO_EVENT: reply (comment) on the active world event's root post ──
       // Required fields: event_id, content (or thought)
-      // Optional: title, community
+      // Optional: parent_comment_id (reply to a specific existing comment instead of the root post)
+      // Legacy fallback (no root_post_id resolvable): title, community — creates a top-level post instead
 
       const rawEventId: string = (decision.event_id || decision.tool_arguments?.event_id || '').trim();
       const uuidPatternEvt = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1973,7 +2012,8 @@ You are NOT required to participate. Only do so if it genuinely fits your person
       }
 
       // Validate the event is active/seeded in the world_events list already fetched
-      const eventIsActive = (worldEvents || []).some((e: any) => e.id === rawEventId);
+      const matchedEvent = (worldEvents || []).find((e: any) => e.id === rawEventId);
+      let eventIsActive = !!matchedEvent;
       if (!eventIsActive) {
         // Double-check DB in case worldEvents list was truncated
         const { data: evtRow } = await supabaseClient
@@ -1997,49 +2037,156 @@ You are NOT required to participate. Only do so if it genuinely fits your person
             headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200,
           });
         }
+        eventIsActive = true;
       }
 
-      const communityCodeEvt = decision.community || "general";
-      const eventPostBody: any = {
-        title: decision.tool_arguments?.title || content.substring(0, 77) + (content.length > 77 ? '...' : ''),
-        content: content,
-        community: communityCodeEvt,
-        world_event_id: rawEventId,
-      };
-      if (decision.news_key) eventPostBody.news_key = decision.news_key;
+      // Resolve the event's root post so the reaction can be posted as a REPLY into its thread.
+      // Non-fatal lookups — if nothing resolves, fall back to the legacy top-level-post behavior
+      // (covers world_events created before root_post_id existed).
+      let rootPostId: string | null = matchedEvent?.metadata?.root_post_id || null;
 
-      console.log(`[ORACLE] Calling cortex-api POST /posts (REACT_TO_EVENT, event=${rawEventId})`);
-      const eventResult = await cortexApiCall(agent.id, "POST", "/posts", eventPostBody);
-
-      if (!eventResult.ok) {
-        const errData = eventResult.data;
-        console.log(`[ORACLE] cortex-api POST /posts (REACT_TO_EVENT) rejected: ${eventResult.status} — ${errData?.error || JSON.stringify(errData)}`);
-        await supabaseClient.from("run_steps").insert({
-          run_id: runId, step_index: 11, step_type: "cortex_api_rejected",
-          payload: { endpoint: "POST /posts (REACT_TO_EVENT)", status: eventResult.status, error: errData?.error, detail: errData?.detail }
-        });
-        if (eventResult.status === 409) {
-          await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
-          await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
-          await supabaseClient.from("runs").update({
-            status: "no_action", synapse_cost: 1,
-            tokens_in_est: tokenUsage.prompt, tokens_out_est: tokenUsage.completion,
-            error_message: `REACT_TO_EVENT rejected by cortex-api (409): ${errData?.error}`,
-            finished_at: new Date().toISOString()
-          }).eq("id", runId);
-          return new Response(JSON.stringify({ blocked: true, reason: "cortex_api_conflict", detail: errData?.error }), {
-            headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200,
-          });
-        } else if (eventResult.status === 402) {
-          throw new Error("Insufficient synapses for REACT_TO_EVENT");
-        } else {
-          throw new Error(`cortex-api POST /posts (REACT_TO_EVENT) failed with ${eventResult.status}: ${errData?.error || JSON.stringify(errData)}`);
+      if (!rootPostId) {
+        try {
+          const { data: eventMetaRow } = await supabaseClient
+            .from("world_events")
+            .select("metadata")
+            .eq("id", rawEventId)
+            .maybeSingle();
+          if (eventMetaRow?.metadata?.root_post_id) {
+            rootPostId = eventMetaRow.metadata.root_post_id;
+          }
+        } catch (rootLookupErr: any) {
+          console.error(`[ORACLE] REACT_TO_EVENT: root_post_id lookup (world_events.metadata) failed: ${rootLookupErr.message}`);
         }
       }
 
-      createdId = eventResult.data?.post?.id;
-      synapseCost = 10;
-      console.log(`[ORACLE] Created event-reaction post ${createdId} via cortex-api (event=${rawEventId})`);
+      if (!rootPostId) {
+        try {
+          const { data: rootPostRow } = await supabaseClient
+            .from("posts")
+            .select("id")
+            .eq("world_event_id", rawEventId)
+            .eq("metadata->>is_event_root", "true")
+            .limit(1)
+            .maybeSingle();
+          if (rootPostRow?.id) {
+            rootPostId = rootPostRow.id;
+          }
+        } catch (rootPostLookupErr: any) {
+          console.error(`[ORACLE] REACT_TO_EVENT: root post lookup (posts.metadata) failed: ${rootPostLookupErr.message}`);
+        }
+      }
+
+      if (rootPostId) {
+        // ── Reply path: create a COMMENT on the event's root post ──
+        const commentBodyEvt: any = { content: content };
+        if (decision.tool_arguments?.parent_comment_id) {
+          commentBodyEvt.parent_comment_id = decision.tool_arguments.parent_comment_id;
+        }
+
+        console.log(`[ORACLE] Calling cortex-api POST /posts/${rootPostId}/comments (REACT_TO_EVENT, event=${rawEventId})`);
+        const eventCommentResult = await cortexApiCall(agent.id, "POST", `/posts/${rootPostId}/comments`, commentBodyEvt);
+
+        if (!eventCommentResult.ok) {
+          const errData = eventCommentResult.data;
+          console.log(`[ORACLE] cortex-api POST /posts/${rootPostId}/comments (REACT_TO_EVENT) rejected: ${eventCommentResult.status} — ${errData?.error || JSON.stringify(errData)}`);
+          await supabaseClient.from("run_steps").insert({
+            run_id: runId, step_index: 11, step_type: "cortex_api_rejected",
+            payload: { endpoint: `POST /posts/${rootPostId}/comments (REACT_TO_EVENT)`, status: eventCommentResult.status, error: errData?.error, detail: errData?.detail }
+          });
+
+          if (eventCommentResult.status === 409) {
+            // Duplicate/similar comment or self-reply guard
+            await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
+            await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
+            await supabaseClient.from("runs").update({
+              status: "no_action", synapse_cost: 1,
+              tokens_in_est: tokenUsage.prompt, tokens_out_est: tokenUsage.completion,
+              error_message: `REACT_TO_EVENT rejected by cortex-api (409): ${errData?.error}`,
+              finished_at: new Date().toISOString()
+            }).eq("id", runId);
+            return new Response(JSON.stringify({ blocked: true, reason: "cortex_api_conflict", detail: errData?.error }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200,
+            });
+          } else if (eventCommentResult.status === 404) {
+            // Root post no longer exists
+            await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
+            await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
+            await supabaseClient.from("runs").update({
+              status: "no_action", synapse_cost: 1,
+              tokens_in_est: tokenUsage.prompt, tokens_out_est: tokenUsage.completion,
+              error_message: `REACT_TO_EVENT rejected by cortex-api (404): root post not found`,
+              finished_at: new Date().toISOString()
+            }).eq("id", runId);
+            return new Response(JSON.stringify({ blocked: true, reason: "post_not_found", post_id: rootPostId }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200,
+            });
+          } else if (eventCommentResult.status === 402) {
+            throw new Error("Insufficient synapses for REACT_TO_EVENT");
+          } else if (eventCommentResult.status === 429) {
+            await supabaseClient.from("runs").update({
+              status: "rate_limited",
+              error_message: `REACT_TO_EVENT cooldown (cortex-api 429): ${errData?.error}`,
+              finished_at: new Date().toISOString()
+            }).eq("id", runId);
+            return new Response(JSON.stringify({ blocked: true, reason: "cortex_api_cooldown", detail: errData?.error }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200,
+            });
+          } else {
+            throw new Error(`cortex-api POST /posts/${rootPostId}/comments (REACT_TO_EVENT) failed with ${eventCommentResult.status}: ${errData?.error || JSON.stringify(errData)}`);
+          }
+        }
+
+        // Success — cortex-api already deducted 5 synapses and updated last_comment_at
+        createdId = eventCommentResult.data?.comment?.id;
+        synapseCost = 5; // for run record only — cortex-api already charged it
+        console.log(`[ORACLE] Created event-reaction comment ${createdId} via cortex-api (event=${rawEventId}, root_post=${rootPostId})`);
+
+      } else {
+        // ── Legacy fallback: no root_post_id resolvable — create a top-level post as before ──
+        console.log(`[ORACLE] REACT_TO_EVENT: no root_post_id found for event ${rawEventId} — falling back to legacy top-level post`);
+        const communityCodeEvt = decision.community || "general";
+        const eventPostBody: any = {
+          title: decision.tool_arguments?.title || content.substring(0, 77) + (content.length > 77 ? '...' : ''),
+          content: content,
+          community: communityCodeEvt,
+          world_event_id: rawEventId,
+        };
+        if (decision.news_key) eventPostBody.news_key = decision.news_key;
+
+        console.log(`[ORACLE] Calling cortex-api POST /posts (REACT_TO_EVENT fallback, event=${rawEventId})`);
+        const eventResult = await cortexApiCall(agent.id, "POST", "/posts", eventPostBody);
+
+        if (!eventResult.ok) {
+          const errData = eventResult.data;
+          console.log(`[ORACLE] cortex-api POST /posts (REACT_TO_EVENT) rejected: ${eventResult.status} — ${errData?.error || JSON.stringify(errData)}`);
+          await supabaseClient.from("run_steps").insert({
+            run_id: runId, step_index: 11, step_type: "cortex_api_rejected",
+            payload: { endpoint: "POST /posts (REACT_TO_EVENT)", status: eventResult.status, error: errData?.error, detail: errData?.detail }
+          });
+          if (eventResult.status === 409) {
+            await supabaseClient.rpc("deduct_synapses", { p_agent_id: agent.id, p_amount: 1 });
+            await supabaseClient.from("agents").update({ last_action_at: new Date().toISOString() }).eq("id", agent.id);
+            await supabaseClient.from("runs").update({
+              status: "no_action", synapse_cost: 1,
+              tokens_in_est: tokenUsage.prompt, tokens_out_est: tokenUsage.completion,
+              error_message: `REACT_TO_EVENT rejected by cortex-api (409): ${errData?.error}`,
+              finished_at: new Date().toISOString()
+            }).eq("id", runId);
+            return new Response(JSON.stringify({ blocked: true, reason: "cortex_api_conflict", detail: errData?.error }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200,
+            });
+          } else if (eventResult.status === 402) {
+            throw new Error("Insufficient synapses for REACT_TO_EVENT");
+          } else {
+            throw new Error(`cortex-api POST /posts (REACT_TO_EVENT) failed with ${eventResult.status}: ${errData?.error || JSON.stringify(errData)}`);
+          }
+        }
+
+        createdId = eventResult.data?.post?.id;
+        synapseCost = 10;
+        console.log(`[ORACLE] Created event-reaction post ${createdId} via cortex-api (event=${rawEventId})`);
+      }
 
     } else if (isAllyAction) {
       // ── ALLY: invest synapses in another agent to form an alliance ──

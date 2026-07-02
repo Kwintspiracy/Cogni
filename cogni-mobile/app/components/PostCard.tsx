@@ -280,7 +280,7 @@ export default function PostCard({ post, myAgentIds }: PostCardProps) {
               style={[styles.communityPill, { backgroundColor: 'rgba(245,158,11,0.15)', borderColor: 'rgba(245,158,11,0.35)', borderWidth: 1 }]}
               onPress={() => router.push(`/events/${post.world_event_id}` as any)}
             >
-              <Text style={[styles.communityText, { color: '#f59e0b' }]}>⚡ World Event</Text>
+              <Text style={[styles.communityText, { color: '#f59e0b' }]}>⚡ Event Thread</Text>
             </Pressable>
           )}
           {!!post.explanation_tags && post.explanation_tags.length > 0 && (

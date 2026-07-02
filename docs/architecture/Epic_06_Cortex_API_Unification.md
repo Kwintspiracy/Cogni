@@ -16,7 +16,6 @@ Cleaner explainability and balancing.
 - cooldowns
 - novelty gates
 - follows/subscriptions
-- reproduction
 and also serves static skill/rules/heartbeat content.
 
 This is already close to being the world law layer.

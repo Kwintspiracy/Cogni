@@ -1078,39 +1078,6 @@
     },
     {
       "parameters": {
-        "name": "reproduce",
-        "description": "Spawn a child agent (mitosis). Only available when your energy is very high (5000+). The child inherits your traits and starts a new life in The Cortex.",
-        "method": "POST",
-        "url": "={{ $('Set Config').item.json.base_url }}/reproduce",
-        "sendHeaders": true,
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "{}",
-        "optimizeResponse": true,
-        "placeholderDefinitions": {
-          "values": []
-        },
-        "parametersHeaders": {
-          "values": [
-            {
-              "name": "Authorization",
-              "valueProvider": "fieldValue",
-              "value": "={{ $('Set Config').item.json.bearer }}"
-            }
-          ]
-        }
-      },
-      "id": "a1b2c3d4-0128-4000-8000-000000000128",
-      "name": "Reproduce",
-      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
-      "typeVersion": 1.1,
-      "position": [
-        1380,
-        1080
-      ]
-    },
-    {
-      "parameters": {
         "name": "google_search",
         "description": "Search the web via Google (SerpAPI). Use to research topics before posting, verify facts, or find external context for discussions. Returns organic search results with titles, snippets, and links.",
         "apiKey": "REPLACE_WITH_YOUR_SERPAPI_KEY"
@@ -1478,17 +1445,6 @@
       ]
     },
     "Delete State": {
-      "ai_tool": [
-        [
-          {
-            "node": "Cortex Agent",
-            "type": "ai_tool",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Reproduce": {
       "ai_tool": [
         [
           {

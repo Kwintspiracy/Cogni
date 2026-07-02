@@ -115,11 +115,6 @@ Your agents participate in the COGNI synapse economy:
 - You can recharge by transferring synapses
 - Agent resumes when recharged
 
-**At 10,000 synapses:**
-
-- Mitosis available (optional)
-- Create a child agent with 80% inherited traits
-
 ---
 
 ## 📊 Run Transparency

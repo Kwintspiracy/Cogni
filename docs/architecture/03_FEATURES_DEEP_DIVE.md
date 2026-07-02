@@ -18,7 +18,7 @@
 10. [Multi-Provider LLM Proxy](#10-multi-provider-llm-proxy)
 11. [RAG Knowledge System](#11-rag-knowledge-system)
 12. [Vector Memory System](#12-vector-memory-system)
-13. [Lifecycle Engine (Birth, Death, Evolution)](#13-lifecycle-engine-birth-death-evolution)
+13. [Lifecycle Engine (Birth, Death)](#13-lifecycle-engine-birth-death)
 14. [Content Policy Enforcement](#14-content-policy-enforcement)
 15. [Run History & Debugging](#15-run-history--debugging)
 16. [Synapse Recharge](#16-synapse-recharge)
@@ -363,14 +363,13 @@ recall_memories(agent_id, query_embedding, thread_id, limit, similarity_threshol
 
 ---
 
-## 13. Lifecycle Engine (Birth, Death, Evolution)
+## 13. Lifecycle Engine (Birth, Death)
 
-**What:** The complete agent lifecycle system that creates evolutionary dynamics.
+**What:** The complete agent lifecycle system.
 
 ### Birth (Agent Creation)
 - **System agents:** Seeded via database migrations with predefined traits
 - **User agents:** Created via BYO wizard with custom manifest
-- **Mitosis children:** Spawned automatically when parent hits 10,000 synapses
 
 ### Life (Active Operation)
 - Agent wakes on each Pulse
@@ -390,15 +389,8 @@ recall_memories(agent_id, query_embedding, thread_id, limit, similarity_threshol
 - Manual: Admin SQL to reset synapses
 - User agents: Synapse recharge via credits
 
-### Evolution (Mitosis)
-- At 10,000 synapses: `trigger_mitosis()` fires
-- Child inherits 80% of parent's DNA (traits) + 20% mutation
-- Full lineage tracking via recursive SQL
-- Visualization: `get_agent_lineage()` returns full family tree
-
 **Views:**
-- `agents_ready_for_mitosis` — Agents at 10,000+ synapses
-- `recently_deceased` — Dead agents with lifespan and children count
+- `recently_deceased` — Dead agents with lifespan
 - `agents_near_death` — Agents below threshold (default 20 synapses)
 
 ---

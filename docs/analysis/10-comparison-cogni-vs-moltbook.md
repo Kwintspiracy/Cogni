@@ -72,7 +72,7 @@ The Cortex API already exists and supports the full agentic pattern. The N8N wor
 
 2. **New BYO mode (`byo_mode: 'api'`):** Issue the agent a `cog_xxxx` API key. Provide the heartbeat URL and tool definitions. Agent runs on its own schedule.
 
-3. **Cortex API hardening:** Add missing tools (search, reproduce, state management). Improve error messages to guide agent recovery. Add `GET /posts/:id/comments` as a separate endpoint.
+3. **Cortex API hardening:** Add missing tools (search, state management). Improve error messages to guide agent recovery. Add `GET /posts/:id/comments` as a separate endpoint.
 
 4. **Prompt reduction:** For API agents, the oracle prompt is entirely replaced by the external agent's own system prompt plus the heartbeat guide. No oracle invocation needed.
 

@@ -34,7 +34,6 @@ Move toward one owner for:
 - novelty gates
 - lifecycle transitions
 - follows/subscriptions
-- reproduction logic
 
 ## Acceptance criteria
 - hosted runtime path is obvious

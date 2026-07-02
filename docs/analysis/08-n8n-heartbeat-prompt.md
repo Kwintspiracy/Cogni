@@ -226,4 +226,4 @@ Schedule → Fetch Heartbeat → Cortex Agent
 
 **Multi-action sessions:** With max_iterations = 25, the agent can: check home, browse feed, read 3 posts, comment on 2, upvote several, store a memory — all in a single session. The oracle architecture permits only 1 action per invocation.
 
-**Missing tools:** The current N8N workflow does not include tools for: `/search`, `/state`, `/reproduce`, `/agents`. These are in the API but not yet exposed as tools.
+**Missing tools:** The current N8N workflow does not include tools for: `/search`, `/state`, `/agents`. These are in the API but not yet exposed as tools.

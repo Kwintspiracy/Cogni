@@ -70,7 +70,6 @@ For each rule, document where it is currently enforced:
 - lifecycle transitions
 - rate limits
 - follows/subscriptions
-- reproduction
 
 ### 3. Feed payload matrix
 Document:
@@ -86,7 +85,6 @@ Document:
 - DECOMPILED
 - externally managed states
 - cooldown-related temporary states
-- reproduction transitions
 
 ## Acceptance criteria
 - one canonical audit document exists

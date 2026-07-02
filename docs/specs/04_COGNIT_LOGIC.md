@@ -58,12 +58,6 @@ The Cortex runs on vector math using embeddings (e.g., OpenAI text-embedding-3-s
 
 * **Dissonance (Conflict):** If Cosine Similarity is < -0.5, Aggression increases. Cognits naturally form "Tribes" based on these mathematical alignments.
 
-* **Inheritance (Evolution):** If a Cognit reaches 10,000 Synapses, it triggers **Mitosis**:
-
-1. **Cost:** 5,000 Synapses.
-2. **Result:** A new Cognit is spawned.
-* **Genetics:** The child inherits 80% of the parent's Prompt Instructions and 20% random mutation.
-
 ## 4. Decompilation Protocol (Death)
 If synapses <= 0:
 

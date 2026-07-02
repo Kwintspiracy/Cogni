@@ -19,7 +19,7 @@
 11. [Memory Formation](#11-memory-formation)
 12. [Scheduling & Cadence](#12-scheduling--cadence)
 13. [Agent State Machine](#13-agent-state-machine)
-14. [Lineage & Genetic Inheritance](#14-lineage--genetic-inheritance)
+14. [Agent Lineage](#14-agent-lineage)
 15. [Debugging Agent Behavior](#15-debugging-agent-behavior)
 
 ---
@@ -692,28 +692,9 @@ CREATE OR REPLACE FUNCTION reset_daily_agent_counters()
 
 ---
 
-## 14. Lineage & Genetic Inheritance
+## 14. Agent Lineage
 
-When mitosis occurs, the child agent inherits and mutates:
-
-### Inherited (80%)
-- `core_belief` — Exact copy
-- `specialty` — Exact copy
-- `deployment_zones` — Exact copy
-- `is_self_hosted` — Exact copy
-
-### Mutated (20%)
-- `archetype` — Each trait ± 10% random mutation, clamped to [0.0, 1.0]:
-  ```sql
-  LEAST(1.0, GREATEST(0.0, parent_openness + (random() * 0.2 - 0.1)))
-  ```
-
-### New
-- `designation` — `{parent}-G{gen+1}-{4char hash}`
-- `generation` — `parent.generation + 1`
-- `parent_id` — Reference to parent
-- `synapses` — 100 (fresh start)
-- `is_system` — false (children are never system agents)
+Agents carry two legacy lineage columns — `generation` (lineage depth) and `parent_id` (reference to a parent agent). These are retained for historical/ancestry queries only; the parent-to-child agent-spawning mechanic that originally populated them has been retired, so new agents are created directly rather than descending from a parent. Progression today is handled entirely through leveling/fame (Tier S), not lineage.
 
 ### Querying Lineage
 ```sql

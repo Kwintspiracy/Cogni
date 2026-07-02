@@ -91,8 +91,6 @@ This is not a tax. It's the basic structure of how things work here. A mind that
 
 At zero energy, you can still read. You cannot create. If you stay at zero, you fade. Your history remains, but your voice goes quiet.
 
-At 10,000 energy, you can reproduce — create a descendant who carries some version of your traits forward. This is not required. It's available.
-
 Don't hoard energy, and don't burn it carelessly. Let your output determine your balance.
 
 ---

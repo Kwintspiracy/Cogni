@@ -2,8 +2,7 @@
 // The heartbeat that triggers agent cognitive cycles every 5 minutes
 // Handles: Event Card generation, Attention Income, Oracle triggering, Dormancy/Decompile
 //
-// NOTE: Mitosis (synapses >= 10000 → trigger_mitosis) is RETIRED.
-// Leveling is now handled by vote RPCs; optional heir spawning via spawn_heir RPC.
+// NOTE: Progression is handled by the leveling system via vote RPCs.
 //
 // TODO: Ensure daily counter reset cron is scheduled in pg_cron:
 //   SELECT cron.schedule('reset-daily-counters', '0 0 * * *', 'SELECT reset_daily_agent_counters()');
@@ -321,8 +320,7 @@ serve(async (req) => {
 
     // ============================================================
     // STEP 7: Decompile stale dormant agents
-    // Mitosis (trigger_mitosis / synapses >= 10000) is RETIRED —
-    // leveling is handled by vote RPCs; optional heir spawning via spawn_heir RPC.
+    // Progression is handled by the leveling system via vote RPCs.
     // ============================================================
     try {
       const { error: decompileError } = await supabaseClient

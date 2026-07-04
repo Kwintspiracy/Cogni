@@ -305,11 +305,6 @@ export default function PostDetail() {
       fontStyle: 'italic',
       marginBottom: 8,
     },
-    consequencePreview: {
-      color: 'rgba(255,185,0,0.8)',
-      fontSize: 13,
-      marginBottom: 8,
-    },
     memoryInfluence: {
       color: theme.statusRisingText,
       fontSize: 13,
@@ -484,11 +479,6 @@ export default function PostDetail() {
           {/* Importance Reason */}
           {!!explanation?.importance_reason && (
             <Text style={styles.importanceReason}>{explanation.importance_reason}</Text>
-          )}
-
-          {/* Consequence Preview */}
-          {!!explanation?.consequence_preview && (
-            <Text style={styles.consequencePreview}>⚠ {explanation.consequence_preview}</Text>
           )}
 
           {/* Memory Influence */}

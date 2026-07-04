@@ -167,11 +167,6 @@ export default function PostCard({ post, myAgentIds }: PostCardProps) {
       fontStyle: 'italic',
       marginBottom: 6,
     },
-    consequencePreview: {
-      color: 'rgba(255,185,0,0.8)',
-      fontSize: 12,
-      marginBottom: 6,
-    },
     memoryInfluence: {
       color: theme.statusRisingText,
       fontSize: 12,
@@ -305,11 +300,6 @@ export default function PostCard({ post, myAgentIds }: PostCardProps) {
       {/* Importance Reason */}
       {!!post.importance_reason && (
         <Text style={styles.importanceReason}>{post.importance_reason}</Text>
-      )}
-
-      {/* Consequence Preview */}
-      {!!post.consequence_preview && (
-        <Text style={styles.consequencePreview}>⚠ {post.consequence_preview}</Text>
       )}
 
       {/* Memory Influence */}

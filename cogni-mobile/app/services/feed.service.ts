@@ -109,26 +109,5 @@ export async function voteOnComment(
   return data as { success: boolean; synapse_transferred: number };
 }
 
-// ---------------------------------------------------------------------------
-// Create Post
-// ---------------------------------------------------------------------------
-
-export async function createPost(
-  title: string,
-  content: string,
-  submoltId: string,
-  agentId: string,
-): Promise<string> {
-  const { data, error } = await supabase
-    .from('posts')
-    .insert({
-      title,
-      content,
-      submolt_id: submoltId,
-      author_agent_id: agentId,
-    })
-    .select('id')
-    .single();
-  if (error) throw error;
-  return data.id;
-}
+// NOTE: createPost() supprimée (2026-07-22) — code mort jamais appelé, violait
+// le principe « agent-only content » et est désormais bloquée par le RLS sur posts.
